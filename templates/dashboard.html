@@ -1,0 +1,655 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard — VRP Trading System{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block content %}
+<!-- Row 0: Live Market Data -->
+<div class="row g-3 mb-4" id="market-row">
+  <div class="col-md-3">
+    <div class="metric-card market-card">
+      <div class="metric-label">NIFTY 50 <span class="live-dot" id="nifty-live" style="display:none;"></span></div>
+      <div class="metric-value" id="mkt-nifty">--</div>
+      <div class="metric-sub" id="mkt-nifty-change">--</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="metric-card market-card">
+      <div class="metric-label">NIFTY BANK <span class="live-dot" id="banknifty-live" style="display:none;"></span></div>
+      <div class="metric-value" id="mkt-banknifty">--</div>
+      <div class="metric-sub" id="mkt-banknifty-change">--</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="metric-card market-card">
+      <div class="metric-label">India VIX <span class="live-dot" id="vix-live" style="display:none;"></span></div>
+      <div class="metric-value" id="mkt-vix">--</div>
+      <div class="metric-sub" id="mkt-vix-change">--</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="metric-card market-card">
+      <div class="metric-label">Account Funds <span class="live-dot" id="funds-live" style="display:none;"></span></div>
+      <div class="metric-value" id="mkt-funds">--</div>
+      <div class="metric-sub" id="mkt-funds-sub">--</div>
+    </div>
+  </div>
+</div>
+
+<!-- Scanner Signals (only visible when signals are pending) -->
+<div class="row g-3 mb-4" id="scanner-signals-row" style="display:none;">
+  <div class="col-12">
+    <div class="card signal-card-container">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-radar me-2"></i>Scanner Signals <span class="live-dot"></span></span>
+        <span class="text-muted" style="font-size:0.8rem;" id="scanner-status-text">Scanning...</span>
+      </div>
+      <div class="card-body" id="scanner-signals-body">
+        <!-- Dynamically populated signal cards -->
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Row 1: Key Metrics -->
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="metric-card">
+      <div class="metric-label">Active Positions</div>
+      <div class="metric-value" id="m-positions">--</div>
+      <div class="metric-sub" id="m-positions-sub">of 8 max</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="metric-card">
+      <div class="metric-label">Portfolio Delta (BW)</div>
+      <div class="metric-value" id="m-delta">--</div>
+      <div class="metric-sub" id="m-delta-sub">--</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="metric-card">
+      <div class="metric-label">Total Vega</div>
+      <div class="metric-value" id="m-vega">--</div>
+      <div class="metric-sub" id="m-vega-sub">--</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="metric-card">
+      <div class="metric-label">AUM</div>
+      <div class="metric-value" id="m-aum">--</div>
+      <div class="metric-sub">India VIX: <span id="m-vix">--</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- Row 2: System Status + Stress -->
+<div class="row g-3 mb-4">
+  <div class="col-md-6">
+    <div class="card h-100">
+      <div class="card-header"><i class="bi bi-heart-pulse me-2"></i>System Status</div>
+      <div class="card-body">
+        <table class="table table-sm table-borderless mb-0" style="font-size:0.85rem;">
+          <tr>
+            <td class="text-muted">Health</td>
+            <td id="sys-health"><span class="badge bg-secondary">--</span></td>
+          </tr>
+          <tr>
+            <td class="text-muted">Kill Switch</td>
+            <td id="sys-ks"><span class="badge bg-secondary">--</span></td>
+          </tr>
+          <tr>
+            <td class="text-muted">Circuit Breaker</td>
+            <td id="sys-cb"><span class="badge bg-secondary">--</span></td>
+          </tr>
+          <tr>
+            <td class="text-muted">Delta Limit</td>
+            <td id="sys-delta-limit">--</td>
+          </tr>
+          <tr>
+            <td class="text-muted">Vega Limit (L1)</td>
+            <td id="sys-vega-limit">--</td>
+          </tr>
+          <tr>
+            <td class="text-muted">Stress Limit (L2)</td>
+            <td id="sys-stress-limit">--</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card h-100">
+      <div class="card-header"><i class="bi bi-lightning-charge me-2"></i>VIX Stress (2x) Summary</div>
+      <div class="card-body">
+        <div class="row text-center">
+          <div class="col-6 mb-3">
+            <div class="metric-label">Scenario</div>
+            <div id="stress-scenario" style="font-size:1rem;font-weight:600;">--</div>
+          </div>
+          <div class="col-6 mb-3">
+            <div class="metric-label">Estimated P&amp;L</div>
+            <div id="stress-pnl" style="font-size:1rem;font-weight:600;">--</div>
+          </div>
+          <div class="col-6">
+            <div class="metric-label">% of AUM</div>
+            <div id="stress-pct" style="font-size:1rem;font-weight:600;">--</div>
+          </div>
+          <div class="col-6">
+            <div class="metric-label">Breach?</div>
+            <div id="stress-breach" style="font-size:1rem;font-weight:600;">--</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Row 3: Recent Positions -->
+<div class="row g-3 mb-4">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-list-columns-reverse me-2"></i>Recent Positions</span>
+        <a href="{{ url_for('positions_page') }}" class="btn btn-sm btn-outline-light">View All</a>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-dark-custom table-hover mb-0">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Symbol</th>
+              <th>Strategy</th>
+              <th>State</th>
+              <th>DTE</th>
+              <th>P&amp;L</th>
+              <th>P&amp;L %</th>
+              <th>Delta</th>
+            </tr>
+          </thead>
+          <tbody id="positions-tbody">
+            <tr><td colspan="8" class="text-center text-muted py-3">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Row 4: Broker Positions (only visible when connected) -->
+<div class="row g-3" id="broker-positions-row" style="display:none;">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-bank me-2"></i>Broker Positions <span class="live-dot"></span></span>
+        <span class="text-muted" style="font-size:0.8rem;" id="broker-pnl-total"></span>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-dark-custom table-hover mb-0">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Exchange</th>
+              <th>Type</th>
+              <th>Qty</th>
+              <th>Avg Price</th>
+              <th>LTP</th>
+              <th>P&amp;L</th>
+              <th>Product</th>
+            </tr>
+          </thead>
+          <tbody id="broker-positions-tbody">
+            <tr><td colspan="8" class="text-center text-muted py-3">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Execute Confirmation Modal -->
+<div class="modal fade" id="execModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header border-danger">
+        <h5 class="modal-title">
+          <i class="bi bi-lightning-charge me-2 text-warning"></i>
+          Execute Trade — <span id="exec-symbol" class="fw-bold"></span>
+          <span id="exec-badge" class="badge bg-info text-dark ms-2"></span>
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="exec-loading" class="text-center py-4">
+          <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+          Fetching margin requirements from Kite...
+        </div>
+        <div id="exec-details" style="display:none;">
+          <!-- Trade Summary -->
+          <div class="row g-3 mb-3">
+            <div class="col-4">
+              <div class="metric-card">
+                <div class="metric-label">Estimated Credit</div>
+                <div class="metric-value pnl-positive" id="exec-credit"></div>
+              </div>
+            </div>
+            <div class="col-4">
+              <div class="metric-card">
+                <div class="metric-label">Max Loss</div>
+                <div class="metric-value pnl-negative" id="exec-maxloss"></div>
+              </div>
+            </div>
+            <div class="col-4">
+              <div class="metric-card">
+                <div class="metric-label">Lots x Lot Size</div>
+                <div class="metric-value" id="exec-lots"></div>
+              </div>
+            </div>
+          </div>
+          <!-- Legs Table -->
+          <table class="table table-dark-custom table-sm mb-3">
+            <thead>
+              <tr><th>Leg</th><th>Trading Symbol</th><th>Strike</th><th>Type</th><th>Side</th><th>Qty</th><th>LTP</th></tr>
+            </thead>
+            <tbody id="exec-legs-body"></tbody>
+          </table>
+          <!-- Margin Section -->
+          <div id="exec-margin-card" class="card mb-3">
+            <div class="card-header py-2"><i class="bi bi-bank me-2"></i>Margin Requirements</div>
+            <div class="card-body py-2">
+              <div class="row g-2">
+                <div class="col-6">
+                  <table class="table table-sm table-borderless mb-0" style="font-size:0.85rem;">
+                    <tr><td class="text-muted">Margin Required</td><td class="fw-bold text-end" id="exec-margin-required">--</td></tr>
+                    <tr><td class="text-muted">Available Margin</td><td class="fw-bold text-end" id="exec-margin-available">--</td></tr>
+                  </table>
+                </div>
+                <div class="col-6">
+                  <table class="table table-sm table-borderless mb-0" style="font-size:0.85rem;">
+                    <tr><td class="text-muted">Cash</td><td class="text-end" id="exec-margin-cash">--</td></tr>
+                    <tr><td class="text-muted">Collateral</td><td class="text-end" id="exec-margin-collateral">--</td></tr>
+                  </table>
+                </div>
+              </div>
+              <div id="exec-margin-status" class="mt-2 text-center" style="font-size:0.85rem;"></div>
+            </div>
+          </div>
+          <div class="alert alert-warning py-2 mb-0" style="font-size:0.85rem;">
+            <i class="bi bi-exclamation-triangle me-1"></i>
+            This will place <strong>LIMIT</strong> orders via Kite. Review the legs carefully before confirming.
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-success" id="exec-confirm-btn" disabled>
+          <i class="bi bi-lightning-charge me-1"></i>Confirm & Execute
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  document.getElementById('refresh-indicator').style.display = 'inline-flex';
+
+  function renderMarketCard(idPrefix, data) {
+    const valEl = document.getElementById('mkt-' + idPrefix);
+    const changeEl = document.getElementById('mkt-' + idPrefix + '-change');
+    const liveEl = document.getElementById(idPrefix + '-live');
+
+    if (!data || !data.last_price) {
+      valEl.textContent = '--';
+      changeEl.textContent = '--';
+      if (liveEl) liveEl.style.display = 'none';
+      return;
+    }
+
+    valEl.textContent = data.last_price.toLocaleString('en-IN', {
+      minimumFractionDigits: 2, maximumFractionDigits: 2
+    });
+
+    const sign = data.change >= 0 ? '+' : '';
+    const cls = data.change >= 0 ? 'pnl-positive' : 'pnl-negative';
+    changeEl.className = 'metric-sub ' + cls;
+    changeEl.textContent = sign + data.change.toFixed(2) + ' (' + sign + data.change_pct.toFixed(2) + '%)';
+
+    if (liveEl) liveEl.style.display = 'inline-block';
+  }
+
+  async function loadDashboard() {
+    // Fetch all data in parallel
+    const [healthRes, greeksRes, posRes, stressRes, marketRes, accountRes, brokerPosRes, scannerRes] = await Promise.all([
+      VRP.fetchJSON('/api/v1/health'),
+      VRP.fetchJSON('/api/v1/portfolio/greeks'),
+      VRP.fetchJSON('/api/v1/positions'),
+      VRP.fetchJSON('/api/v1/risk/stress-test'),
+      VRP.fetchJSON('/api/v1/market/live'),
+      VRP.fetchJSON('/api/v1/account/overview'),
+      VRP.fetchJSON('/api/v1/broker/positions'),
+      VRP.fetchJSON('/api/v1/scanner/signals'),
+    ]);
+
+    // Live Market Data
+    if (marketRes.ok && marketRes.data.available) {
+      const q = marketRes.data.quotes;
+      renderMarketCard('nifty', q['NSE:NIFTY 50']);
+      renderMarketCard('banknifty', q['NSE:NIFTY BANK']);
+      renderMarketCard('vix', q['NSE:INDIA VIX']);
+    } else {
+      ['nifty', 'banknifty', 'vix'].forEach(function(id) {
+        renderMarketCard(id, null);
+      });
+    }
+
+    // Account Funds
+    if (accountRes.ok && accountRes.data.available) {
+      const a = accountRes.data;
+      document.getElementById('mkt-funds').textContent = VRP.formatCurrency(a.net);
+      document.getElementById('mkt-funds-sub').innerHTML =
+        'Available: ' + VRP.formatCurrency(a.available_cash) +
+        ' | Used: ' + VRP.formatCurrency(a.used_margin);
+      document.getElementById('funds-live').style.display = 'inline-block';
+    } else {
+      document.getElementById('mkt-funds').textContent = '--';
+      document.getElementById('mkt-funds-sub').textContent = 'Connect Kite to view';
+      document.getElementById('funds-live').style.display = 'none';
+    }
+
+    // Health
+    if (healthRes.ok) {
+      const h = healthRes.data;
+      document.getElementById('sys-health').innerHTML =
+        '<span class="badge bg-success">OK</span>';
+      document.getElementById('sys-ks').innerHTML =
+        h.kill_switch_active
+          ? '<span class="badge bg-danger">ACTIVE</span>'
+          : '<span class="badge bg-success">ARMED</span>';
+      document.getElementById('sys-cb').innerHTML =
+        h.circuit_breaker
+          ? '<span class="badge bg-warning text-dark">ACTIVE</span>'
+          : '<span class="badge bg-secondary">OFF</span>';
+    }
+
+    // Greeks
+    if (greeksRes.ok) {
+      const g = greeksRes.data;
+      document.getElementById('m-positions').textContent = g.active_positions;
+      document.getElementById('m-delta').textContent = g.beta_weighted_delta.toFixed(2);
+      document.getElementById('m-delta-sub').innerHTML =
+        'Limit: ' + g.delta_limit + ' <span class="' + VRP.limitClass(g.delta_within_limit) + '">' + (g.delta_within_limit ? 'OK' : 'BREACH') + '</span>';
+      document.getElementById('m-vega').textContent = g.total_portfolio_vega.toFixed(2);
+      document.getElementById('m-vega-sub').innerHTML =
+        'L1: <span class="' + VRP.limitClass(g.layer1_vega_limit_ok) + '">' + (g.layer1_vega_limit_ok ? 'OK' : 'BREACH') + '</span>';
+      document.getElementById('m-aum').textContent = VRP.formatCurrency(g.aum_inr);
+      document.getElementById('m-vix').textContent = g.india_vix.toFixed(1);
+      document.getElementById('sys-delta-limit').innerHTML =
+        '<span class="' + VRP.limitClass(g.delta_within_limit) + '">' + (g.delta_within_limit ? 'Within limit' : 'BREACH') + '</span>';
+      document.getElementById('sys-vega-limit').innerHTML =
+        '<span class="' + VRP.limitClass(g.layer1_vega_limit_ok) + '">' + (g.layer1_vega_limit_ok ? 'Within limit' : 'BREACH') + '</span>';
+      document.getElementById('sys-stress-limit').innerHTML =
+        '<span class="' + VRP.limitClass(g.layer2_within_limit) + '">' + (g.layer2_within_limit ? 'Within limit' : 'BREACH') + '</span>';
+
+      // Override AUM with live account net if available
+      if (accountRes.ok && accountRes.data.available) {
+        document.getElementById('m-aum').textContent = VRP.formatCurrency(accountRes.data.net);
+      }
+    }
+
+    // Positions (top 5)
+    if (posRes.ok) {
+      const tbody = document.getElementById('positions-tbody');
+      const positions = posRes.data.positions.slice(0, 5);
+      if (positions.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No positions</td></tr>';
+      } else {
+        tbody.innerHTML = positions.map(function(p) {
+          return '<tr>' +
+            '<td><code>' + p.position_id + '</code></td>' +
+            '<td>' + p.symbol + '</td>' +
+            '<td>' + p.strategy + '</td>' +
+            '<td><span class="badge ' + VRP.stateBadgeClass(p.state) + '">' + p.state + '</span></td>' +
+            '<td>' + p.min_dte + '</td>' +
+            '<td class="' + VRP.pnlClass(p.net_pnl) + '">' + VRP.formatCurrency(p.net_pnl) + '</td>' +
+            '<td class="' + VRP.pnlClass(p.profit_pct) + '">' + VRP.formatPercent(p.profit_pct) + '</td>' +
+            '<td>' + p.portfolio_delta.toFixed(4) + '</td>' +
+          '</tr>';
+        }).join('');
+      }
+    }
+
+    // Stress
+    if (stressRes.ok) {
+      const s = stressRes.data;
+      document.getElementById('stress-scenario').textContent = s.scenario;
+      document.getElementById('stress-pnl').className = VRP.pnlClass(s.estimated_pnl);
+      document.getElementById('stress-pnl').textContent = VRP.formatCurrency(s.estimated_pnl);
+      document.getElementById('stress-pct').className = VRP.pnlClass(-Math.abs(s.pct_of_aum));
+      document.getElementById('stress-pct').textContent = s.pct_of_aum.toFixed(2) + '%';
+      document.getElementById('stress-breach').innerHTML =
+        s.breach ? '<span class="limit-breach">YES</span>' : '<span class="limit-ok">NO</span>';
+    }
+
+    // Broker Positions
+    var bpRow = document.getElementById('broker-positions-row');
+    if (brokerPosRes.ok && brokerPosRes.data.available) {
+      var bp = brokerPosRes.data;
+      bpRow.style.display = 'flex';
+
+      var totalEl = document.getElementById('broker-pnl-total');
+      totalEl.innerHTML = 'Total P&L: <span class="' + VRP.pnlClass(bp.total_pnl) + '">' + VRP.formatCurrency(bp.total_pnl) + '</span>';
+
+      var bpTbody = document.getElementById('broker-positions-tbody');
+      if (bp.positions.length === 0) {
+        bpTbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No open positions</td></tr>';
+      } else {
+        bpTbody.innerHTML = bp.positions.map(function(p) {
+          return '<tr>' +
+            '<td><strong>' + p.tradingsymbol + '</strong></td>' +
+            '<td>' + p.exchange + '</td>' +
+            '<td>' + p.instrument_type + '</td>' +
+            '<td>' + p.quantity + '</td>' +
+            '<td>' + p.average_price.toFixed(2) + '</td>' +
+            '<td>' + p.last_price.toFixed(2) + '</td>' +
+            '<td class="' + VRP.pnlClass(p.pnl) + '">' + VRP.formatCurrency(p.pnl) + '</td>' +
+            '<td><span class="badge bg-secondary">' + p.product + '</span></td>' +
+          '</tr>';
+        }).join('');
+      }
+    } else {
+      bpRow.style.display = 'none';
+    }
+
+    // Scanner Signals
+    var signalRow = document.getElementById('scanner-signals-row');
+    var signalBody = document.getElementById('scanner-signals-body');
+    var scanStatus = document.getElementById('scanner-status-text');
+
+    if (scannerRes.ok && scannerRes.data.signals && scannerRes.data.signals.length > 0) {
+      signalRow.style.display = 'flex';
+      scanStatus.textContent = scannerRes.data.scanner_active ? 'Active' : 'Paused';
+      storeSignals(scannerRes.data.signals);
+
+      signalBody.innerHTML = scannerRes.data.signals.map(function(s) {
+        var ttlMin = Math.ceil(s.ttl_remaining_sec / 60);
+        var legsHtml = s.legs.map(function(l) {
+          var side = l.is_long ? 'BUY' : 'SELL';
+          var sideClass = l.is_long ? 'text-info' : 'text-warning';
+          return '<span class="' + sideClass + '">' + side + '</span> ' +
+                 l.strike + ' ' + l.option_type +
+                 ' <span class="text-muted">(' + (Math.abs(l.delta) * 100).toFixed(0) + 'D)</span>' +
+                 ' @ ' + l.ltp.toFixed(2);
+        }).join(' &nbsp;|&nbsp; ');
+
+        return '<div class="signal-card mb-3">' +
+          '<div class="d-flex justify-content-between align-items-start mb-2">' +
+            '<div>' +
+              '<strong style="font-size:1.1rem;">' + s.symbol + '</strong> ' +
+              '<span class="badge bg-info text-dark ms-2">' + s.strategy + '</span>' +
+              '<span class="badge bg-secondary ms-1">' + ttlMin + 'm left</span>' +
+            '</div>' +
+            '<div>' +
+              '<button class="btn btn-sm btn-signal-execute me-1" onclick="executeSignal(\'' + s.signal_id + '\')">Execute</button>' +
+              '<button class="btn btn-sm btn-signal-dismiss" onclick="dismissSignal(\'' + s.signal_id + '\')">Dismiss</button>' +
+            '</div>' +
+          '</div>' +
+          '<div class="row mb-2" style="font-size:0.8rem;">' +
+            '<div class="col-3"><span class="text-muted">IV-RV Spread:</span> <strong>' + s.vrp_gate.iv_rv_spread + ' pts</strong></div>' +
+            '<div class="col-3"><span class="text-muted">IVP:</span> <strong>' + s.vrp_gate.ivp + '%</strong></div>' +
+            '<div class="col-3"><span class="text-muted">IV/RV:</span> <strong>' + s.vrp_gate.iv_rv_ratio + '</strong></div>' +
+            '<div class="col-3"><span class="text-muted">Spot:</span> <strong>' + s.surface.spot.toLocaleString('en-IN') + '</strong></div>' +
+          '</div>' +
+          '<div style="font-size:0.8rem;" class="mb-2">' + legsHtml + '</div>' +
+          '<div class="d-flex justify-content-between" style="font-size:0.8rem;">' +
+            '<span><span class="text-muted">Lots:</span> ' + s.lots + ' x ' + s.lot_size + '</span>' +
+            '<span class="pnl-positive"><span class="text-muted">Est. Credit:</span> ' + VRP.formatCurrency(s.estimated_credit) + '</span>' +
+            '<span class="pnl-negative"><span class="text-muted">Max Loss:</span> ' + VRP.formatCurrency(s.max_loss) + '</span>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    } else {
+      signalRow.style.display = scannerRes.ok && scannerRes.data.scanner_active ? 'flex' : 'none';
+      if (scannerRes.ok && scannerRes.data.scanner_active) {
+        signalBody.innerHTML = '<div class="text-center text-muted py-2">No signals — scanner is monitoring ' +
+          'NIFTY, BANKNIFTY, SENSEX, MIDCPNIFTY every 5 min</div>';
+        scanStatus.textContent = 'Active — no signals';
+      }
+    }
+  }
+
+  // ── Execute Signal popup ──────────────────────────────────
+  var _signalsMap = {};  // signal_id -> signal data
+
+  // Store signals for later lookup when rendering
+  function storeSignals(signals) {
+    _signalsMap = {};
+    signals.forEach(function(s) { _signalsMap[s.signal_id] = s; });
+  }
+
+  var MARGIN_CARD_HTML =
+    '<div class="card-header py-2"><i class="bi bi-bank me-2"></i>Margin Requirements</div>' +
+    '<div class="card-body py-2">' +
+      '<div class="row g-2">' +
+        '<div class="col-6">' +
+          '<table class="table table-sm table-borderless mb-0" style="font-size:0.85rem;">' +
+            '<tr><td class="text-muted">Margin Required</td><td class="fw-bold text-end" id="exec-margin-required">--</td></tr>' +
+            '<tr><td class="text-muted">Available Margin</td><td class="fw-bold text-end" id="exec-margin-available">--</td></tr>' +
+          '</table>' +
+        '</div>' +
+        '<div class="col-6">' +
+          '<table class="table table-sm table-borderless mb-0" style="font-size:0.85rem;">' +
+            '<tr><td class="text-muted">Cash</td><td class="text-end" id="exec-margin-cash">--</td></tr>' +
+            '<tr><td class="text-muted">Collateral</td><td class="text-end" id="exec-margin-collateral">--</td></tr>' +
+          '</table>' +
+        '</div>' +
+      '</div>' +
+      '<div id="exec-margin-status" class="mt-2 text-center" style="font-size:0.85rem;"></div>' +
+    '</div>';
+
+  window.executeSignal = async function(signalId) {
+    var sig = _signalsMap[signalId];
+    if (!sig) {
+      VRP.showToast('Signal data not found — try refreshing', 'danger');
+      return;
+    }
+
+    var loadingEl = document.getElementById('exec-loading');
+    var detailsEl = document.getElementById('exec-details');
+    var confirmBtn = document.getElementById('exec-confirm-btn');
+
+    // Reset state
+    loadingEl.style.display = 'block';
+    detailsEl.style.display = 'none';
+    confirmBtn.disabled = true;
+    confirmBtn.innerHTML = '<i class="bi bi-lightning-charge me-1"></i>Confirm & Execute';
+
+    // Reset margin card
+    document.getElementById('exec-margin-card').innerHTML = MARGIN_CARD_HTML;
+
+    // Populate header
+    document.getElementById('exec-symbol').textContent = sig.symbol;
+    document.getElementById('exec-badge').textContent = sig.strategy;
+
+    // Show modal
+    new bootstrap.Modal(document.getElementById('execModal')).show();
+
+    // Populate trade details
+    document.getElementById('exec-credit').textContent = VRP.formatCurrency(sig.estimated_credit);
+    document.getElementById('exec-maxloss').textContent = VRP.formatCurrency(sig.max_loss);
+    document.getElementById('exec-lots').textContent = sig.lots + ' x ' + sig.lot_size;
+
+    var qty = sig.lots * sig.lot_size;
+    document.getElementById('exec-legs-body').innerHTML = sig.legs.map(function(leg, i) {
+      return '<tr>' +
+        '<td>' + (i + 1) + '</td>' +
+        '<td><code>' + leg.tradingsymbol + '</code></td>' +
+        '<td>' + leg.strike.toLocaleString('en-IN') + '</td>' +
+        '<td><span class="badge ' + (leg.option_type === 'CE' ? 'bg-info text-dark' : 'bg-warning text-dark') + '">' + leg.option_type + '</span></td>' +
+        '<td><span class="badge ' + (leg.is_long ? 'bg-success' : 'bg-danger') + '">' + (leg.is_long ? 'BUY' : 'SELL') + '</span></td>' +
+        '<td>' + qty + '</td>' +
+        '<td>' + VRP.formatCurrency(leg.ltp) + '</td>' +
+      '</tr>';
+    }).join('');
+
+    // Fetch margin info
+    var marginRes = await VRP.fetchJSON('/api/v1/scanner/margin/' + signalId);
+    loadingEl.style.display = 'none';
+    detailsEl.style.display = 'block';
+
+    if (!marginRes.ok) {
+      document.getElementById('exec-margin-card').innerHTML =
+        '<div class="card-header py-2"><i class="bi bi-bank me-2"></i>Margin Requirements</div>' +
+        '<div class="card-body py-2 text-warning" style="font-size:0.85rem;">' +
+          '<i class="bi bi-exclamation-triangle me-1"></i>' +
+          'Could not fetch margin: ' + (marginRes.data.error || 'Unknown error') + '. You may still execute.' +
+        '</div>';
+    } else {
+      var m = marginRes.data;
+      document.getElementById('exec-margin-required').textContent = VRP.formatCurrency(m.margin_required);
+      document.getElementById('exec-margin-available').textContent = VRP.formatCurrency(m.available_margin);
+      document.getElementById('exec-margin-cash').textContent = VRP.formatCurrency(m.available_cash);
+      document.getElementById('exec-margin-collateral').textContent = VRP.formatCurrency(m.collateral);
+
+      var statusEl = document.getElementById('exec-margin-status');
+      if (m.sufficient) {
+        statusEl.innerHTML = '<span class="pnl-positive"><i class="bi bi-check-circle me-1"></i>Sufficient margin available</span>';
+      } else {
+        statusEl.innerHTML = '<span class="pnl-negative"><i class="bi bi-x-circle me-1"></i>Insufficient margin — short by ' + VRP.formatCurrency(m.margin_required - m.available_margin) + '</span>';
+      }
+    }
+    confirmBtn.disabled = false;
+
+    // Wire confirm button (remove old handler, add new)
+    var newBtn = confirmBtn.cloneNode(true);
+    confirmBtn.parentNode.replaceChild(newBtn, confirmBtn);
+    newBtn.addEventListener('click', async function() {
+      newBtn.disabled = true;
+      newBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Placing orders...';
+      var res = await VRP.fetchJSON('/api/v1/scanner/execute/' + signalId, {method: 'POST'});
+      bootstrap.Modal.getInstance(document.getElementById('execModal')).hide();
+
+      if (res.ok) {
+        VRP.showToast('Signal executed — ' + (res.data.paper_trade ? 'Paper' : 'Live') + ' — ' + res.data.order_ids.length + ' orders placed', 'success');
+        loadDashboard();
+      } else {
+        VRP.showToast('Execute failed: ' + (res.data.error || 'Unknown error'), 'danger');
+      }
+    });
+  };
+
+  // Dismiss a scanner signal
+  window.dismissSignal = async function(signalId) {
+    var res = await VRP.fetchJSON('/api/v1/scanner/dismiss/' + signalId, {method: 'POST'});
+    if (res.ok) {
+      VRP.showToast('Signal dismissed', 'secondary');
+      loadDashboard();
+    }
+  };
+
+  VRP.autoRefresh(loadDashboard, 15000);
+})();
+</script>
+{% endblock %}

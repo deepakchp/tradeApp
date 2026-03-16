@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Logs
+logs/
+*.log
+
+# Environment variables
+.env
+.env.*
+secrets.py
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Windows Zone Identifier files
+*:Zone.Identifier
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Redis / Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Misc
+nul
+C:

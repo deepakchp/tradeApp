@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+
+{% block title %}Settings — VRP Trading System{% endblock %}
+{% block page_title %}System Settings{% endblock %}
+
+{% block content %}
+<p class="text-muted mb-4" style="font-size:0.85rem;">
+  Read-only view of current system configuration. To modify, update <code>config.py</code> and restart.
+</p>
+
+<div class="accordion" id="configAccordion">
+
+  <!-- VRP Gate -->
+  <div class="accordion-item">
+    <h2 class="accordion-header">
+      <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#cfg-vrp-gate">
+        VRP Entry Gate
+      </button>
+    </h2>
+    <div id="cfg-vrp-gate" class="accordion-collapse collapse show" data-bs-parent="#configAccordion">
+      <div class="accordion-body" id="cfg-vrp-gate-body">
+        <div class="text-center text-muted py-3">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Greeks & Position -->
+  <div class="accordion-item">
+    <h2 class="accordion-header">
+      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#cfg-greeks">
+        Greeks &amp; Position Config
+      </button>
+    </h2>
+    <div id="cfg-greeks" class="accordion-collapse collapse" data-bs-parent="#configAccordion">
+      <div class="accordion-body" id="cfg-greeks-body">
+        <div class="text-center text-muted py-3">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Trade Lifecycle -->
+  <div class="accordion-item">
+    <h2 class="accordion-header">
+      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#cfg-lifecycle">
+        Trade Lifecycle
+      </button>
+    </h2>
+    <div id="cfg-lifecycle" class="accordion-collapse collapse" data-bs-parent="#configAccordion">
+      <div class="accordion-body" id="cfg-lifecycle-body">
+        <div class="text-center text-muted py-3">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Risk & Sizing -->
+  <div class="accordion-item">
+    <h2 class="accordion-header">
+      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#cfg-risk">
+        Risk &amp; Sizing
+      </button>
+    </h2>
+    <div id="cfg-risk" class="accordion-collapse collapse" data-bs-parent="#configAccordion">
+      <div class="accordion-body" id="cfg-risk-body">
+        <div class="text-center text-muted py-3">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Slippage Control -->
+  <div class="accordion-item">
+    <h2 class="accordion-header">
+      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#cfg-slippage">
+        Slippage Control
+      </button>
+    </h2>
+    <div id="cfg-slippage" class="accordion-collapse collapse" data-bs-parent="#configAccordion">
+      <div class="accordion-body" id="cfg-slippage-body">
+        <div class="text-center text-muted py-3">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Whipsaw Prevention -->
+  <div class="accordion-item">
+    <h2 class="accordion-header">
+      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#cfg-whipsaw">
+        Whipsaw Prevention
+      </button>
+    </h2>
+    <div id="cfg-whipsaw" class="accordion-collapse collapse" data-bs-parent="#configAccordion">
+      <div class="accordion-body" id="cfg-whipsaw-body">
+        <div class="text-center text-muted py-3">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Infrastructure -->
+  <div class="accordion-item">
+    <h2 class="accordion-header">
+      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#cfg-infra">
+        Infrastructure
+      </button>
+    </h2>
+    <div id="cfg-infra" class="accordion-collapse collapse" data-bs-parent="#configAccordion">
+      <div class="accordion-body" id="cfg-infra-body">
+        <div class="text-center text-muted py-3">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  function renderConfigSection(containerId, items) {
+    const el = document.getElementById(containerId);
+    if (!items || Object.keys(items).length === 0) {
+      el.innerHTML = '<div class="text-muted">No configuration available</div>';
+      return;
+    }
+    el.innerHTML = Object.entries(items).map(([key, value]) =>
+      `<div class="config-row">
+        <span class="config-key">${key}</span>
+        <span class="config-value">${value}</span>
+      </div>`
+    ).join('');
+  }
+
+  async function loadConfig() {
+    const res = await VRP.fetchJSON('/api/v1/config');
+    if (!res.ok) {
+      VRP.showToast('Failed to load configuration', 'error');
+      return;
+    }
+
+    const c = res.data;
+    renderConfigSection('cfg-vrp-gate-body', c.vrp_gate);
+    renderConfigSection('cfg-greeks-body', c.greeks);
+    renderConfigSection('cfg-lifecycle-body', c.lifecycle);
+    renderConfigSection('cfg-risk-body', c.risk);
+    renderConfigSection('cfg-slippage-body', c.slippage);
+    renderConfigSection('cfg-whipsaw-body', c.whipsaw);
+    renderConfigSection('cfg-infra-body', c.infrastructure);
+  }
+
+  loadConfig();
+})();
+</script>
+{% endblock %}

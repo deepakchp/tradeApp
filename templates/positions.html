@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+
+{% block title %}Positions — VRP Trading System{% endblock %}
+{% block page_title %}Positions{% endblock %}
+
+{% block content %}
+<!-- Filters -->
+<div class="row g-2 mb-3">
+  <div class="col-auto">
+    <select class="form-select form-select-sm" id="filter-state">
+      <option value="">All States</option>
+      <option value="ACTIVE">Active</option>
+      <option value="ADJUSTING">Adjusting</option>
+      <option value="CLOSING">Closing</option>
+      <option value="CLOSED">Closed</option>
+    </select>
+  </div>
+  <div class="col-auto">
+    <select class="form-select form-select-sm" id="filter-symbol">
+      <option value="">All Symbols</option>
+    </select>
+  </div>
+  <div class="col-auto">
+    <select class="form-select form-select-sm" id="filter-strategy">
+      <option value="">All Strategies</option>
+    </select>
+  </div>
+  <div class="col-auto ms-auto">
+    <span class="text-muted" style="font-size:0.8rem;">
+      <span id="pos-count">0</span> positions
+    </span>
+  </div>
+</div>
+
+<!-- Positions Table -->
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-dark-custom table-hover mb-0">
+      <thead>
+        <tr>
+          <th></th>
+          <th>ID</th>
+          <th>Symbol</th>
+          <th>Strategy</th>
+          <th>State</th>
+          <th>Entry Spot</th>
+          <th>Entry IV</th>
+          <th>DTE</th>
+          <th>P&amp;L</th>
+          <th>P&amp;L %</th>
+          <th>Delta</th>
+          <th>Vega</th>
+          <th>Legs</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="positions-tbody">
+        <tr><td colspan="14" class="text-center text-muted py-4">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Adjust Modal -->
+<div class="modal fade" id="adjustModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Adjust Position <code id="adj-pos-id"></code></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted" style="font-size:0.85rem;">
+          Trigger a manual evaluation for this position. Optional market data overrides:
+        </p>
+        <div class="row g-2">
+          <div class="col-6">
+            <label class="form-label">Spot</label>
+            <input type="number" class="form-control form-control-sm" id="adj-spot" step="0.01">
+          </div>
+          <div class="col-6">
+            <label class="form-label">IV</label>
+            <input type="number" class="form-control form-control-sm" id="adj-iv" step="0.01">
+          </div>
+          <div class="col-6">
+            <label class="form-label">VIX</label>
+            <input type="number" class="form-control form-control-sm" id="adj-vix" step="0.01">
+          </div>
+          <div class="col-6">
+            <label class="form-label">Spot 5m ago</label>
+            <input type="number" class="form-control form-control-sm" id="adj-spot5m" step="0.01">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="adj-submit">Run Adjustment</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  document.getElementById('refresh-indicator').style.display = 'inline-flex';
+
+  let allPositions = [];
+
+  function applyFilters() {
+    const stateF = document.getElementById('filter-state').value;
+    const symbolF = document.getElementById('filter-symbol').value;
+    const strategyF = document.getElementById('filter-strategy').value;
+
+    let filtered = allPositions;
+    if (stateF) filtered = filtered.filter(p => p.state === stateF);
+    if (symbolF) filtered = filtered.filter(p => p.symbol === symbolF);
+    if (strategyF) filtered = filtered.filter(p => p.strategy === strategyF);
+
+    renderPositions(filtered);
+  }
+
+  function renderPositions(positions) {
+    const tbody = document.getElementById('positions-tbody');
+    document.getElementById('pos-count').textContent = positions.length;
+
+    if (positions.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="14" class="text-center text-muted py-4">No positions found</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = positions.map(p => `
+      <tr>
+        <td></td>
+        <td><code>${p.position_id}</code></td>
+        <td><strong>${p.symbol}</strong></td>
+        <td>${p.strategy}</td>
+        <td><span class="badge ${VRP.stateBadgeClass(p.state)}">${p.state}</span></td>
+        <td>${p.entry_spot.toLocaleString('en-IN')}</td>
+        <td>${p.entry_iv.toFixed(1)}%</td>
+        <td>${p.min_dte}</td>
+        <td class="${VRP.pnlClass(p.net_pnl)}">${VRP.formatCurrency(p.net_pnl)}</td>
+        <td class="${VRP.pnlClass(p.profit_pct)}">${VRP.formatPercent(p.profit_pct)}</td>
+        <td>${p.portfolio_delta.toFixed(4)}</td>
+        <td>${p.portfolio_vega.toFixed(4)}</td>
+        <td>${p.legs_count}</td>
+        <td>
+          ${p.state === 'ACTIVE' ? `<button class="btn btn-sm btn-outline-warning" onclick="openAdjust('${p.position_id}')">
+            <i class="bi bi-wrench"></i>
+          </button>` : ''}
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  async function loadPositions() {
+    const res = await VRP.fetchJSON('/api/v1/positions');
+    if (!res.ok) return;
+
+    allPositions = res.data.positions;
+
+    // Populate filter dropdowns
+    const symbols = [...new Set(allPositions.map(p => p.symbol))];
+    const strategies = [...new Set(allPositions.map(p => p.strategy))];
+    const symSelect = document.getElementById('filter-symbol');
+    const stratSelect = document.getElementById('filter-strategy');
+
+    const curSym = symSelect.value;
+    const curStrat = stratSelect.value;
+    symSelect.innerHTML = '<option value="">All Symbols</option>' +
+      symbols.map(s => `<option value="${s}">${s}</option>`).join('');
+    stratSelect.innerHTML = '<option value="">All Strategies</option>' +
+      strategies.map(s => `<option value="${s}">${s}</option>`).join('');
+    symSelect.value = curSym;
+    stratSelect.value = curStrat;
+
+    applyFilters();
+  }
+
+  // Filter change handlers
+  document.getElementById('filter-state').addEventListener('change', applyFilters);
+  document.getElementById('filter-symbol').addEventListener('change', applyFilters);
+  document.getElementById('filter-strategy').addEventListener('change', applyFilters);
+
+  // Adjust modal
+  window.openAdjust = function(posId) {
+    document.getElementById('adj-pos-id').textContent = posId;
+    document.getElementById('adj-spot').value = '';
+    document.getElementById('adj-iv').value = '';
+    document.getElementById('adj-vix').value = '';
+    document.getElementById('adj-spot5m').value = '';
+    new bootstrap.Modal(document.getElementById('adjustModal')).show();
+  };
+
+  document.getElementById('adj-submit').addEventListener('click', async () => {
+    const posId = document.getElementById('adj-pos-id').textContent;
+    const body = { position_id: posId };
+
+    const spot = document.getElementById('adj-spot').value;
+    const iv = document.getElementById('adj-iv').value;
+    const vix = document.getElementById('adj-vix').value;
+    const spot5m = document.getElementById('adj-spot5m').value;
+
+    if (spot) body.spot = parseFloat(spot);
+    if (iv) body.iv = parseFloat(iv);
+    if (vix) body.vix = parseFloat(vix);
+    if (spot5m) body.spot_5m = parseFloat(spot5m);
+
+    const res = await VRP.fetchJSON('/api/v1/trade/adjust', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+
+    bootstrap.Modal.getInstance(document.getElementById('adjustModal')).hide();
+
+    if (res.ok) {
+      const d = res.data;
+      if (d.action === 'none') {
+        VRP.showToast(`No adjustment needed: ${d.reason}`, 'info');
+      } else {
+        VRP.showToast(`Adjustment queued: ${d.action} — ${d.reason}`, 'success');
+      }
+      loadPositions();
+    } else {
+      VRP.showToast(res.data.error || 'Adjustment failed', 'error');
+    }
+  });
+
+  VRP.autoRefresh(loadPositions, 10000);
+})();
+</script>
+{% endblock %}

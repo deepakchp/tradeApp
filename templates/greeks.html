@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+
+{% block title %}Portfolio Greeks — VRP Trading System{% endblock %}
+{% block page_title %}Portfolio Greeks{% endblock %}
+
+{% block content %}
+<!-- Key Greek Metrics -->
+<div class="row g-3 mb-4">
+  <div class="col-md-4">
+    <div class="metric-card text-center">
+      <div class="metric-label">Beta-Weighted Delta</div>
+      <div class="metric-value" id="g-delta">--</div>
+      <div class="metric-sub" id="g-delta-limit">--</div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="metric-card text-center">
+      <div class="metric-label">Total Portfolio Vega</div>
+      <div class="metric-value" id="g-vega">--</div>
+      <div class="metric-sub" id="g-vega-limit">--</div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="metric-card text-center">
+      <div class="metric-label">Stress P&amp;L (VIX 2x)</div>
+      <div class="metric-value" id="g-stress">--</div>
+      <div class="metric-sub" id="g-stress-limit">--</div>
+    </div>
+  </div>
+</div>
+
+<!-- Info Row -->
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="metric-card">
+      <div class="metric-label">Active Positions</div>
+      <div class="metric-value" id="g-positions">--</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="metric-card">
+      <div class="metric-label">India VIX</div>
+      <div class="metric-value" id="g-vix">--</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="metric-card">
+      <div class="metric-label">Nifty Spot</div>
+      <div class="metric-value" id="g-nifty">--</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="metric-card">
+      <div class="metric-label">AUM</div>
+      <div class="metric-value" id="g-aum">--</div>
+    </div>
+  </div>
+</div>
+
+<!-- Risk Limits Table -->
+<div class="card">
+  <div class="card-header"><i class="bi bi-shield-check me-2"></i>Risk Limits Summary</div>
+  <div class="card-body p-0">
+    <table class="table table-dark-custom mb-0">
+      <thead>
+        <tr>
+          <th>Risk Metric</th>
+          <th>Current Value</th>
+          <th>Limit</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Beta-Weighted Delta</td>
+          <td id="rl-delta-val">--</td>
+          <td id="rl-delta-limit">--</td>
+          <td id="rl-delta-status">--</td>
+        </tr>
+        <tr>
+          <td>Layer 1 — Vega (per VIX pt)</td>
+          <td id="rl-vega-val">--</td>
+          <td id="rl-vega-limit">0.25% AUM per VIX pt</td>
+          <td id="rl-vega-status">--</td>
+        </tr>
+        <tr>
+          <td>Layer 2 — VIX Doubling Stress</td>
+          <td id="rl-stress-val">--</td>
+          <td>Max 8% AUM loss</td>
+          <td id="rl-stress-status">--</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  document.getElementById('refresh-indicator').style.display = 'inline-flex';
+
+  async function loadGreeks() {
+    const res = await VRP.fetchJSON('/api/v1/portfolio/greeks');
+    if (!res.ok) return;
+
+    const g = res.data;
+
+    // Key metrics
+    document.getElementById('g-delta').textContent = g.beta_weighted_delta.toFixed(2);
+    document.getElementById('g-delta-limit').innerHTML =
+      `Limit: ${g.delta_limit} <span class="${VRP.limitClass(g.delta_within_limit)}">${g.delta_within_limit ? 'OK' : 'BREACH'}</span>`;
+
+    document.getElementById('g-vega').textContent = g.total_portfolio_vega.toFixed(2);
+    document.getElementById('g-vega-limit').innerHTML =
+      `Layer 1: <span class="${VRP.limitClass(g.layer1_vega_limit_ok)}">${g.layer1_vega_limit_ok ? 'OK' : 'BREACH'}</span>`;
+
+    const stressPnl = g.layer2_stress_pnl;
+    document.getElementById('g-stress').textContent = VRP.formatCurrency(stressPnl);
+    document.getElementById('g-stress').className = 'metric-value ' + VRP.pnlClass(stressPnl);
+    document.getElementById('g-stress-limit').innerHTML =
+      `${g.layer2_stress_pct_aum.toFixed(2)}% of AUM — <span class="${VRP.limitClass(g.layer2_within_limit)}">${g.layer2_within_limit ? 'OK' : 'BREACH'}</span>`;
+
+    // Info cards
+    document.getElementById('g-positions').textContent = g.active_positions;
+    document.getElementById('g-vix').textContent = g.india_vix.toFixed(1);
+    document.getElementById('g-nifty').textContent = g.nifty_spot.toLocaleString('en-IN');
+    document.getElementById('g-aum').textContent = VRP.formatCurrency(g.aum_inr);
+
+    // Risk limits table
+    document.getElementById('rl-delta-val').textContent = g.beta_weighted_delta.toFixed(2);
+    document.getElementById('rl-delta-limit').textContent = g.delta_limit;
+    document.getElementById('rl-delta-status').innerHTML =
+      `<span class="${VRP.limitClass(g.delta_within_limit)}">${g.delta_within_limit ? 'WITHIN LIMIT' : 'BREACH'}</span>`;
+
+    document.getElementById('rl-vega-val').textContent = g.total_portfolio_vega.toFixed(2);
+    document.getElementById('rl-vega-status').innerHTML =
+      `<span class="${VRP.limitClass(g.layer1_vega_limit_ok)}">${g.layer1_vega_limit_ok ? 'WITHIN LIMIT' : 'BREACH'}</span>`;
+
+    document.getElementById('rl-stress-val').textContent =
+      `${VRP.formatCurrency(stressPnl)} (${g.layer2_stress_pct_aum.toFixed(2)}%)`;
+    document.getElementById('rl-stress-status').innerHTML =
+      `<span class="${VRP.limitClass(g.layer2_within_limit)}">${g.layer2_within_limit ? 'WITHIN LIMIT' : 'BREACH'}</span>`;
+  }
+
+  VRP.autoRefresh(loadGreeks, 15000);
+})();
+</script>
+{% endblock %}

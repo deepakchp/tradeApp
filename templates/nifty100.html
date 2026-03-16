@@ -1,0 +1,804 @@
+{% extends "base.html" %}
+
+{% block title %}NIFTY 50 IV Metrics — VRP Trading System{% endblock %}
+{% block page_title %}NIFTY 50 IV Metrics{% endblock %}
+
+{% block content %}
+<!-- VIX Banner + Stats -->
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="metric-card">
+      <div class="metric-label">India VIX <span class="live-dot" id="vix-live" style="display:none;"></span></div>
+      <div class="metric-value" id="n100-vix">--</div>
+      <div class="metric-sub">Volatility Index</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="metric-card">
+      <div class="metric-label">Scripts Loaded</div>
+      <div class="metric-value" id="n100-count">--</div>
+      <div class="metric-sub" id="n100-total">of -- symbols</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="metric-card">
+      <div class="metric-label">VRP Gate Passed</div>
+      <div class="metric-value pnl-positive" id="n100-passed">--</div>
+      <div class="metric-sub">Meeting entry criteria</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="metric-card">
+      <div class="metric-label">Last Refresh</div>
+      <div class="metric-value" id="n100-time" style="font-size:1rem;">--</div>
+      <div class="metric-sub">Auto-refresh 30s</div>
+    </div>
+  </div>
+</div>
+
+<!-- Filters -->
+<div class="card mb-3">
+  <div class="card-body py-2">
+    <div class="row g-2 align-items-center">
+      <div class="col-md-3">
+        <input type="text" class="form-control form-control-sm" id="filter-symbol"
+               placeholder="Search symbol...">
+      </div>
+      <div class="col-md-2">
+        <select class="form-select form-select-sm" id="filter-sector">
+          <option value="">All Sectors</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <select class="form-select form-select-sm" id="filter-gate">
+          <option value="">All</option>
+          <option value="true">VRP Gate Passed</option>
+          <option value="false">VRP Gate Failed</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <select class="form-select form-select-sm" id="filter-type">
+          <option value="">All Types</option>
+          <option value="index">Indices</option>
+          <option value="stock">Stocks</option>
+        </select>
+      </div>
+      <div class="col-md-3 text-end">
+        <span class="text-muted me-2" style="font-size:0.8rem;" id="filter-count"></span>
+        <button class="btn btn-outline-info btn-sm" id="btn-refresh" title="Force rescan">
+          <i class="bi bi-arrow-clockwise"></i> Rescan
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Data Table -->
+<div class="card">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-dark-custom table-hover table-sm mb-0" id="n100-table">
+        <thead>
+          <tr>
+            <th class="sortable" data-col="symbol" style="cursor:pointer;">Symbol <i class="bi bi-chevron-expand"></i></th>
+            <th class="sortable" data-col="spot" style="cursor:pointer;">Spot <i class="bi bi-chevron-expand"></i></th>
+            <th class="sortable" data-col="iv_rv_spread" style="cursor:pointer;">IV-RV Spread <i class="bi bi-chevron-expand"></i></th>
+            <th class="sortable" data-col="iv_percentile" style="cursor:pointer;">IV Percentile <i class="bi bi-chevron-expand"></i></th>
+            <th class="sortable" data-col="iv_rv_ratio" style="cursor:pointer;">IV/RV Ratio <i class="bi bi-chevron-expand"></i></th>
+            <th class="sortable" data-col="put_skew" style="cursor:pointer;">Put Skew <i class="bi bi-chevron-expand"></i></th>
+            <th class="sortable" data-col="call_skew" style="cursor:pointer;">Call Skew <i class="bi bi-chevron-expand"></i></th>
+            <th class="sortable" data-col="vrp_gate_passed" style="cursor:pointer;">VRP Gate <i class="bi bi-chevron-expand"></i></th>
+            <th class="sortable" data-col="strategy" style="cursor:pointer;">Strategy <i class="bi bi-chevron-expand"></i></th>
+          </tr>
+        </thead>
+        <tbody id="n100-body">
+          <tr><td colspan="9" class="text-center text-muted py-4">
+            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+            Loading metrics from Kite Connect...
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Strategy Detail Modal -->
+<div class="modal fade" id="strategyModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <span id="strat-symbol" class="fw-bold"></span>
+          <span id="strat-badge" class="badge ms-2"></span>
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <!-- Loading -->
+        <div id="strat-loading" class="text-center py-4">
+          <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+          Fetching trade details from Kite...
+        </div>
+        <!-- Error -->
+        <div id="strat-error" class="alert alert-danger" style="display:none;"></div>
+        <!-- Trade details -->
+        <div id="strat-details" style="display:none;">
+          <div class="row g-3 mb-3">
+            <div class="col-4">
+              <div class="metric-card">
+                <div class="metric-label">Estimated Credit</div>
+                <div class="metric-value pnl-positive" id="strat-credit"></div>
+              </div>
+            </div>
+            <div class="col-4">
+              <div class="metric-card">
+                <div class="metric-label">Max Loss</div>
+                <div class="metric-value pnl-negative" id="strat-maxloss"></div>
+              </div>
+            </div>
+            <div class="col-4">
+              <div class="metric-card">
+                <div class="metric-label">Lots x Lot Size</div>
+                <div class="metric-value" id="strat-lots"></div>
+              </div>
+            </div>
+          </div>
+          <div class="row g-3 mb-3">
+            <div class="col-6">
+              <span class="text-muted">Expiry:</span>
+              <strong id="strat-expiry"></strong>
+            </div>
+            <div class="col-6">
+              <span class="text-muted">Spot:</span>
+              <strong id="strat-spot"></strong>
+            </div>
+          </div>
+          <table class="table table-dark-custom table-sm mb-0">
+            <thead>
+              <tr>
+                <th>Leg</th>
+                <th>Trading Symbol</th>
+                <th>Strike</th>
+                <th>Type</th>
+                <th>Side</th>
+                <th>Delta</th>
+                <th>LTP</th>
+              </tr>
+            </thead>
+            <tbody id="strat-legs-body"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        <button type="button" class="btn btn-success" id="strat-execute" style="display:none;">
+          <i class="bi bi-lightning-charge me-1"></i>Execute Trade
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- Execute Confirmation Modal -->
+<div class="modal fade" id="executeModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header border-danger">
+        <h5 class="modal-title">
+          <i class="bi bi-lightning-charge me-2 text-warning"></i>
+          Execute Trade — <span id="exec-symbol" class="fw-bold"></span>
+          <span id="exec-badge" class="badge ms-2"></span>
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <!-- Loading -->
+        <div id="exec-loading" class="text-center py-4">
+          <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+          Fetching margin requirements from Kite...
+        </div>
+        <!-- Error -->
+        <div id="exec-error" class="alert alert-danger" style="display:none;"></div>
+        <!-- Details -->
+        <div id="exec-details" style="display:none;">
+          <!-- Trade Summary -->
+          <div class="row g-3 mb-3">
+            <div class="col-4">
+              <div class="metric-card">
+                <div class="metric-label">Estimated Credit</div>
+                <div class="metric-value pnl-positive" id="exec-credit"></div>
+              </div>
+            </div>
+            <div class="col-4">
+              <div class="metric-card">
+                <div class="metric-label">Max Loss</div>
+                <div class="metric-value pnl-negative" id="exec-maxloss"></div>
+              </div>
+            </div>
+            <div class="col-4">
+              <div class="metric-card">
+                <div class="metric-label">Lots x Lot Size</div>
+                <div class="metric-value" id="exec-lots"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Legs Table -->
+          <table class="table table-dark-custom table-sm mb-3">
+            <thead>
+              <tr>
+                <th>Leg</th>
+                <th>Trading Symbol</th>
+                <th>Strike</th>
+                <th>Type</th>
+                <th>Side</th>
+                <th>Qty</th>
+                <th>LTP</th>
+              </tr>
+            </thead>
+            <tbody id="exec-legs-body"></tbody>
+          </table>
+
+          <!-- Margin Section -->
+          <div class="card mb-3" id="exec-margin-card">
+            <div class="card-header py-2">
+              <i class="bi bi-bank me-2"></i>Margin Requirements
+            </div>
+            <div class="card-body py-2">
+              <div class="row g-2">
+                <div class="col-6">
+                  <table class="table table-sm table-borderless mb-0" style="font-size:0.85rem;">
+                    <tr>
+                      <td class="text-muted">Margin Required</td>
+                      <td class="fw-bold text-end" id="exec-margin-required">--</td>
+                    </tr>
+                    <tr>
+                      <td class="text-muted">Available Margin</td>
+                      <td class="fw-bold text-end" id="exec-margin-available">--</td>
+                    </tr>
+                  </table>
+                </div>
+                <div class="col-6">
+                  <table class="table table-sm table-borderless mb-0" style="font-size:0.85rem;">
+                    <tr>
+                      <td class="text-muted">Cash</td>
+                      <td class="text-end" id="exec-margin-cash">--</td>
+                    </tr>
+                    <tr>
+                      <td class="text-muted">Collateral</td>
+                      <td class="text-end" id="exec-margin-collateral">--</td>
+                    </tr>
+                  </table>
+                </div>
+              </div>
+              <div id="exec-margin-status" class="mt-2 text-center" style="font-size:0.85rem;"></div>
+            </div>
+          </div>
+
+          <div class="alert alert-warning py-2 mb-0" style="font-size:0.85rem;">
+            <i class="bi bi-exclamation-triangle me-1"></i>
+            This will place <strong>LIMIT</strong> orders via Kite. Review the legs carefully before confirming.
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-success" id="exec-confirm-btn" disabled>
+          <i class="bi bi-lightning-charge me-1"></i>Confirm & Execute
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  const INDICES = new Set(["NIFTY", "BANKNIFTY", "SENSEX", "MIDCPNIFTY"]);
+
+  const STRATEGY_LABELS = {
+    'iron_condor': {label: 'Iron Condor', cls: 'bg-primary'},
+    'strangle': {label: 'Strangle', cls: 'bg-info text-dark'},
+    'put_spread': {label: 'Put Spread', cls: 'bg-warning text-dark'},
+    'put_calendar': {label: 'Put Calendar', cls: 'bg-danger'},
+    'ratio_call_spread': {label: 'Ratio Call', cls: 'bg-secondary'},
+    'broken_wing_butterfly': {label: 'BWB', cls: 'bg-dark'},
+  };
+
+  // Thresholds for color-coding (from VRP_GATE and SKEW_CFG)
+  const TH = {
+    spread_good: 2.0,   spread_warn: 1.0,
+    ivp_good: 60,       ivp_warn: 40,
+    ratio_good: 1.15,   ratio_warn: 1.05,
+    put_skew_high: 1.3,
+    call_skew_high: 1.2,
+  };
+
+  let allMetrics = [];
+  let sortCol = 'iv_rv_spread';
+  let sortAsc = false;
+
+  // ── Color helpers ──────────────────────────────────────────
+  function colorClass(val, good, warn, higherIsBetter) {
+    if (val == null) return '';
+    if (higherIsBetter) {
+      if (val >= good) return 'pnl-positive';
+      if (val <= warn) return 'pnl-negative';
+      return '';
+    } else {
+      if (val <= good) return 'pnl-positive';
+      if (val >= warn) return 'pnl-negative';
+      return '';
+    }
+  }
+
+  function skewColor(val, threshold) {
+    if (val == null) return '';
+    if (val >= threshold) return 'pnl-negative';
+    if (val >= threshold * 0.85) return 'text-warning';
+    return 'pnl-positive';
+  }
+
+  // ── Filtering ──────────────────────────────────────────────
+  function getFiltered() {
+    const sym = document.getElementById('filter-symbol').value.toUpperCase();
+    const sector = document.getElementById('filter-sector').value;
+    const gate = document.getElementById('filter-gate').value;
+    const type = document.getElementById('filter-type').value;
+
+    return allMetrics.filter(m => {
+      if (sym && !m.symbol.includes(sym)) return false;
+      if (sector && m.sector !== sector) return false;
+      if (gate === 'true' && !m.vrp_gate_passed) return false;
+      if (gate === 'false' && m.vrp_gate_passed) return false;
+      if (type === 'index' && !INDICES.has(m.symbol)) return false;
+      if (type === 'stock' && INDICES.has(m.symbol)) return false;
+      return true;
+    });
+  }
+
+  // ── Sorting ────────────────────────────────────────────────
+  function sortMetrics(metrics) {
+    return [...metrics].sort((a, b) => {
+      let va = a[sortCol], vb = b[sortCol];
+      if (sortCol === 'symbol' || sortCol === 'sector') {
+        va = (va || '').toString();
+        vb = (vb || '').toString();
+        return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+      }
+      if (sortCol === 'vrp_gate_passed') {
+        va = va ? 1 : 0;
+        vb = vb ? 1 : 0;
+      }
+      va = va ?? -Infinity;
+      vb = vb ?? -Infinity;
+      return sortAsc ? va - vb : vb - va;
+    });
+  }
+
+  // ── Render ─────────────────────────────────────────────────
+  function renderTable() {
+    const filtered = getFiltered();
+    const sorted = sortMetrics(filtered);
+    const tbody = document.getElementById('n100-body');
+
+    document.getElementById('filter-count').textContent =
+      `Showing ${sorted.length} of ${allMetrics.length}`;
+
+    if (sorted.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="10" class="text-center text-muted py-4">
+        No matching symbols found</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = sorted.map(m => {
+      const isIndex = INDICES.has(m.symbol);
+      const symBadge = isIndex
+        ? `<span class="badge bg-info text-dark me-1" style="font-size:0.6rem;">IDX</span>`
+        : '';
+      const sectorBadge = m.sector
+        ? `<br><span class="text-muted" style="font-size:0.7rem;">${m.sector}</span>`
+        : '';
+
+      return `<tr>
+        <td class="fw-semibold">${symBadge}${m.symbol}${sectorBadge}</td>
+        <td>${m.spot != null ? m.spot.toLocaleString('en-IN', {maximumFractionDigits:2}) : '--'}</td>
+        <td class="${colorClass(m.iv_rv_spread, TH.spread_good, TH.spread_warn, true)}">
+          ${m.iv_rv_spread != null ? m.iv_rv_spread.toFixed(2) : '--'}
+        </td>
+        <td class="${colorClass(m.iv_percentile, TH.ivp_good, TH.ivp_warn, true)}">
+          ${m.iv_percentile != null ? m.iv_percentile.toFixed(1) + '%' : '--'}
+        </td>
+        <td class="${colorClass(m.iv_rv_ratio, TH.ratio_good, TH.ratio_warn, true)}">
+          ${m.iv_rv_ratio != null ? m.iv_rv_ratio.toFixed(2) + 'x' : '--'}
+        </td>
+        <td class="${skewColor(m.put_skew, TH.put_skew_high)}">
+          ${m.put_skew != null ? m.put_skew.toFixed(2) : '--'}
+        </td>
+        <td class="${skewColor(m.call_skew, TH.call_skew_high)}">
+          ${m.call_skew != null ? m.call_skew.toFixed(2) : '--'}
+        </td>
+        <td>${m.vrp_gate_passed
+              ? '<span class="badge bg-success">PASSED</span>'
+              : '<span class="badge bg-secondary">FAILED</span>'}</td>
+        <td>${m.strategy && m.vrp_gate_passed
+              ? `<span class="badge ${(STRATEGY_LABELS[m.strategy] || {}).cls || 'bg-dark'}"
+                       style="cursor:pointer;" onclick="openStrategy('${m.symbol}')"
+                       title="Click for trade details"
+                 >${(STRATEGY_LABELS[m.strategy] || {}).label || m.strategy}</span>`
+              : (m.strategy
+                 ? `<span class="badge bg-dark">${(STRATEGY_LABELS[m.strategy] || {}).label || m.strategy}</span>`
+                 : '<span class="text-muted">--</span>')}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // ── Fetch data ─────────────────────────────────────────────
+  async function loadMetrics() {
+    const res = await VRP.fetchJSON('/api/v1/metrics/nifty100');
+
+    if (!res.ok) {
+      const err = res.data.error || 'Failed to fetch metrics';
+      document.getElementById('n100-body').innerHTML =
+        `<tr><td colspan="10" class="text-center text-muted py-4">
+          <i class="bi bi-exclamation-triangle me-2"></i>${err}
+        </td></tr>`;
+      return;
+    }
+
+    const d = res.data;
+    allMetrics = d.metrics || [];
+
+    // Show scan progress when scanning
+    const statusEl = document.getElementById('n100-time');
+    if (d.status === 'scanning') {
+      const pct = d.total_symbols > 0 ? Math.round(d.progress / d.total_symbols * 100) : 0;
+      statusEl.innerHTML =
+        `<span class="text-warning">Scanning... ${d.progress}/${d.total_symbols} (${pct}%)</span>`;
+      document.querySelector('.metric-sub:last-child') ||
+        (document.getElementById('n100-time').nextElementSibling &&
+         (document.getElementById('n100-time').nextElementSibling.textContent = 'Scan in progress'));
+    } else if (d.status === 'idle') {
+      statusEl.innerHTML = '<span class="text-muted">Starting scan...</span>';
+    } else {
+      const ts = d.timestamp ? new Date(d.timestamp) : new Date();
+      statusEl.textContent =
+        ts.toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+    }
+
+    // Update header cards
+    const vixEl = document.getElementById('n100-vix');
+    if (d.vix != null) {
+      vixEl.textContent = d.vix.toFixed(2);
+      document.getElementById('vix-live').style.display = 'inline-block';
+    }
+    document.getElementById('n100-count').textContent = d.count || allMetrics.length;
+    document.getElementById('n100-total').textContent = `of ${d.total_symbols || '--'} symbols`;
+
+    const passed = allMetrics.filter(m => m.vrp_gate_passed).length;
+    document.getElementById('n100-passed').textContent = passed;
+
+    // Populate sector filter (once)
+    const sectorSelect = document.getElementById('filter-sector');
+    if (sectorSelect.options.length <= 1 && allMetrics.length > 0) {
+      const sectors = [...new Set(allMetrics.map(m => m.sector).filter(Boolean))].sort();
+      sectors.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s;
+        opt.textContent = s;
+        sectorSelect.appendChild(opt);
+      });
+    }
+
+    // Show loading row when scanning with no data yet
+    if (allMetrics.length === 0 && d.status === 'scanning') {
+      document.getElementById('n100-body').innerHTML =
+        `<tr><td colspan="10" class="text-center text-muted py-4">
+          <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+          Scanning ${d.progress}/${d.total_symbols} symbols... Data will appear as symbols load.
+        </td></tr>`;
+      return;
+    }
+
+    renderTable();
+  }
+
+  // ── Event listeners ────────────────────────────────────────
+  document.addEventListener('DOMContentLoaded', function() {
+    // Sort on column header click
+    document.querySelectorAll('.sortable').forEach(th => {
+      th.addEventListener('click', function() {
+        const col = this.dataset.col;
+        if (sortCol === col) {
+          sortAsc = !sortAsc;
+        } else {
+          sortCol = col;
+          sortAsc = false;
+        }
+        // Update sort indicators
+        document.querySelectorAll('.sortable i').forEach(i => {
+          i.className = 'bi bi-chevron-expand';
+        });
+        this.querySelector('i').className = sortAsc
+          ? 'bi bi-chevron-up' : 'bi bi-chevron-down';
+        renderTable();
+      });
+    });
+
+    // Filters
+    document.getElementById('filter-symbol').addEventListener('input', renderTable);
+    document.getElementById('filter-sector').addEventListener('change', renderTable);
+    document.getElementById('filter-gate').addEventListener('change', renderTable);
+    document.getElementById('filter-type').addEventListener('change', renderTable);
+
+    // Manual rescan button
+    document.getElementById('btn-refresh').addEventListener('click', async function() {
+      this.disabled = true;
+      this.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Scanning...';
+      await VRP.fetchJSON('/api/v1/metrics/nifty100?refresh=1');
+      setTimeout(() => {
+        this.disabled = false;
+        this.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Rescan';
+      }, 3000);
+    });
+
+    // Set initial sort indicator for iv_rv_spread
+    const defaultTh = document.querySelector('[data-col="iv_rv_spread"]');
+    if (defaultTh) defaultTh.querySelector('i').className = 'bi bi-chevron-down';
+
+    // Auto-refresh: fast (5s) while scanning, normal (30s) when ready
+    let refreshTimer = null;
+    async function refreshLoop() {
+      await loadMetrics();
+      const interval = (allMetrics.length === 0 ||
+        document.getElementById('n100-time')?.innerHTML?.includes('Scanning'))
+        ? 5000 : 30000;
+      refreshTimer = setTimeout(refreshLoop, interval);
+    }
+    refreshLoop();
+  });
+
+  // ── Strategy Detail Modal ───────────────────────────────────
+  let _currentSignalId = null;
+  let _currentSignalData = null;
+
+  window.openStrategy = async function(symbol) {
+    _currentSignalId = null;
+    _currentSignalData = null;
+    const modal = document.getElementById('strategyModal');
+    const loadingEl = document.getElementById('strat-loading');
+    const errorEl = document.getElementById('strat-error');
+    const detailsEl = document.getElementById('strat-details');
+    const executeBtn = document.getElementById('strat-execute');
+
+    // Reset
+    document.getElementById('strat-symbol').textContent = symbol;
+    document.getElementById('strat-badge').textContent = '';
+    document.getElementById('strat-badge').className = 'badge ms-2';
+    loadingEl.style.display = 'block';
+    errorEl.style.display = 'none';
+    detailsEl.style.display = 'none';
+    executeBtn.style.display = 'none';
+
+    new bootstrap.Modal(modal).show();
+
+    const res = await VRP.fetchJSON('/api/v1/metrics/nifty100/trade-details', {
+      method: 'POST',
+      body: JSON.stringify({ symbol }),
+    });
+
+    loadingEl.style.display = 'none';
+
+    if (!res.ok) {
+      errorEl.textContent = res.data.error || 'Failed to compute trade details';
+      errorEl.style.display = 'block';
+      return;
+    }
+
+    const sig = res.data;
+    _currentSignalId = sig.signal_id;
+    _currentSignalData = sig;
+
+    // Header
+    const sl = STRATEGY_LABELS[sig.strategy] || {};
+    document.getElementById('strat-badge').textContent = sl.label || sig.strategy;
+    document.getElementById('strat-badge').className = `badge ms-2 ${sl.cls || 'bg-dark'}`;
+
+    // Summary
+    document.getElementById('strat-credit').textContent = VRP.formatCurrency(sig.estimated_credit);
+    document.getElementById('strat-maxloss').textContent = VRP.formatCurrency(sig.max_loss);
+    document.getElementById('strat-lots').textContent = `${sig.lots} x ${sig.lot_size}`;
+    document.getElementById('strat-spot').textContent =
+      sig.surface?.spot?.toLocaleString('en-IN', {maximumFractionDigits: 2}) || '--';
+
+    if (sig.legs && sig.legs.length > 0) {
+      document.getElementById('strat-expiry').textContent = sig.legs[0].expiry;
+    }
+
+    // Legs table
+    const tbody = document.getElementById('strat-legs-body');
+    tbody.innerHTML = sig.legs.map((leg, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td><code>${leg.tradingsymbol}</code></td>
+        <td>${leg.strike.toLocaleString('en-IN')}</td>
+        <td><span class="badge ${leg.option_type === 'CE' ? 'bg-info text-dark' : 'bg-warning text-dark'}">${leg.option_type}</span></td>
+        <td><span class="badge ${leg.is_long ? 'bg-success' : 'bg-danger'}">${leg.is_long ? 'BUY' : 'SELL'}</span></td>
+        <td>${leg.delta.toFixed(4)}</td>
+        <td>${VRP.formatCurrency(leg.ltp)}</td>
+      </tr>
+    `).join('');
+
+    detailsEl.style.display = 'block';
+    executeBtn.style.display = 'inline-block';
+  };
+
+  // Execute button — open execute confirmation modal with margin info
+  document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('strat-execute').addEventListener('click', async function() {
+      if (!_currentSignalId || !_currentSignalData) return;
+
+      const sig = _currentSignalData;
+      const stratModal = document.getElementById('strategyModal');
+      const stratBsModal = bootstrap.Modal.getInstance(stratModal);
+
+      // Wait for strategy modal to fully close before opening execute modal
+      function openExecModal() {
+        stratModal.removeEventListener('hidden.bs.modal', openExecModal);
+        showExecuteModal(sig);
+      }
+
+      if (stratBsModal) {
+        stratModal.addEventListener('hidden.bs.modal', openExecModal);
+        stratBsModal.hide();
+      } else {
+        showExecuteModal(sig);
+      }
+    });
+
+    async function showExecuteModal(sig) {
+      const execModal = document.getElementById('executeModal');
+      const loadingEl = document.getElementById('exec-loading');
+      const errorEl = document.getElementById('exec-error');
+      const detailsEl = document.getElementById('exec-details');
+      const confirmBtn = document.getElementById('exec-confirm-btn');
+
+      // Reset state
+      loadingEl.style.display = 'block';
+      errorEl.style.display = 'none';
+      detailsEl.style.display = 'none';
+      confirmBtn.disabled = true;
+
+      // Reset margin card HTML in case it was replaced by error text
+      document.getElementById('exec-margin-card').innerHTML =
+        `<div class="card-header py-2"><i class="bi bi-bank me-2"></i>Margin Requirements</div>
+         <div class="card-body py-2">
+           <div class="row g-2">
+             <div class="col-6">
+               <table class="table table-sm table-borderless mb-0" style="font-size:0.85rem;">
+                 <tr><td class="text-muted">Margin Required</td><td class="fw-bold text-end" id="exec-margin-required">--</td></tr>
+                 <tr><td class="text-muted">Available Margin</td><td class="fw-bold text-end" id="exec-margin-available">--</td></tr>
+               </table>
+             </div>
+             <div class="col-6">
+               <table class="table table-sm table-borderless mb-0" style="font-size:0.85rem;">
+                 <tr><td class="text-muted">Cash</td><td class="text-end" id="exec-margin-cash">--</td></tr>
+                 <tr><td class="text-muted">Collateral</td><td class="text-end" id="exec-margin-collateral">--</td></tr>
+               </table>
+             </div>
+           </div>
+           <div id="exec-margin-status" class="mt-2 text-center" style="font-size:0.85rem;"></div>
+         </div>`;
+
+      // Populate header
+      document.getElementById('exec-symbol').textContent = sig.symbol;
+      const sl = STRATEGY_LABELS[sig.strategy] || {};
+      document.getElementById('exec-badge').textContent = sl.label || sig.strategy;
+      document.getElementById('exec-badge').className = `badge ms-2 ${sl.cls || 'bg-dark'}`;
+
+      // Show modal
+      new bootstrap.Modal(execModal).show();
+
+      // Populate trade details
+      document.getElementById('exec-credit').textContent = VRP.formatCurrency(sig.estimated_credit);
+      document.getElementById('exec-maxloss').textContent = VRP.formatCurrency(sig.max_loss);
+      document.getElementById('exec-lots').textContent = `${sig.lots} x ${sig.lot_size}`;
+
+      const qty = sig.lots * sig.lot_size;
+      document.getElementById('exec-legs-body').innerHTML = sig.legs.map((leg, i) => `
+        <tr>
+          <td>${i + 1}</td>
+          <td><code>${leg.tradingsymbol}</code></td>
+          <td>${leg.strike.toLocaleString('en-IN')}</td>
+          <td><span class="badge ${leg.option_type === 'CE' ? 'bg-info text-dark' : 'bg-warning text-dark'}">${leg.option_type}</span></td>
+          <td><span class="badge ${leg.is_long ? 'bg-success' : 'bg-danger'}">${leg.is_long ? 'BUY' : 'SELL'}</span></td>
+          <td>${qty}</td>
+          <td>${VRP.formatCurrency(leg.ltp)}</td>
+        </tr>
+      `).join('');
+
+      // Fetch margin info
+      const marginRes = await VRP.fetchJSON(`/api/v1/scanner/margin/${_currentSignalId}`);
+      loadingEl.style.display = 'none';
+
+      if (!marginRes.ok) {
+        // Show trade details even if margin fetch fails
+        detailsEl.style.display = 'block';
+        document.getElementById('exec-margin-card').innerHTML =
+          `<div class="card-header py-2"><i class="bi bi-bank me-2"></i>Margin Requirements</div>
+           <div class="card-body py-2 text-warning" style="font-size:0.85rem;">
+             <i class="bi bi-exclamation-triangle me-1"></i>
+             Could not fetch margin: ${marginRes.data.error || 'Unknown error'}. You may still execute.
+           </div>`;
+        confirmBtn.disabled = false;
+      } else {
+        const m = marginRes.data;
+        detailsEl.style.display = 'block';
+
+        document.getElementById('exec-margin-required').textContent = VRP.formatCurrency(m.margin_required);
+        document.getElementById('exec-margin-available').textContent = VRP.formatCurrency(m.available_margin);
+        document.getElementById('exec-margin-cash').textContent = VRP.formatCurrency(m.available_cash);
+        document.getElementById('exec-margin-collateral').textContent = VRP.formatCurrency(m.collateral);
+
+        const statusEl = document.getElementById('exec-margin-status');
+        if (m.sufficient) {
+          statusEl.innerHTML = '<span class="pnl-positive"><i class="bi bi-check-circle me-1"></i>Sufficient margin available</span>';
+        } else {
+          statusEl.innerHTML = `<span class="pnl-negative"><i class="bi bi-x-circle me-1"></i>Insufficient margin — short by ${VRP.formatCurrency(m.margin_required - m.available_margin)}</span>`;
+        }
+        confirmBtn.disabled = false;
+      }
+    }
+
+    // Confirm & Execute button
+    document.getElementById('exec-confirm-btn').addEventListener('click', async function() {
+      if (!_currentSignalId) return;
+      const btn = this;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Placing orders...';
+
+      const res = await VRP.fetchJSON(`/api/v1/scanner/execute/${_currentSignalId}`, {
+        method: 'POST',
+      });
+      bootstrap.Modal.getInstance(document.getElementById('executeModal')).hide();
+
+      if (res.ok) {
+        const msg = res.data.paper_trade
+          ? `Paper trade executed for ${_currentSignalData.symbol} (${res.data.order_ids.length} legs)`
+          : `Trade executed for ${_currentSignalData.symbol} — ${res.data.order_ids.length} orders placed`;
+        VRP.showToast(msg, 'success');
+      } else {
+        VRP.showToast(res.data.error || 'Execution failed', 'error');
+      }
+
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-lightning-charge me-1"></i>Confirm & Execute';
+    });
+  });
+})();
+</script>
+
+<style>
+  .sortable:hover {
+    color: var(--accent-blue) !important;
+  }
+  .text-warning {
+    color: var(--accent-yellow) !important;
+  }
+  .live-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    background: var(--accent-green);
+    border-radius: 50%;
+    animation: pulse 1.5s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+  #n100-table th {
+    white-space: nowrap;
+  }
+</style>
+{% endblock %}

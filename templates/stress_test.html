@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block title %}Stress Test — VRP Trading System{% endblock %}
+{% block page_title %}VIX Stress Test{% endblock %}
+
+{% block content %}
+<div class="row">
+  <!-- Input Form -->
+  <div class="col-lg-5 mb-4">
+    <div class="card">
+      <div class="card-header"><i class="bi bi-lightning-charge me-2"></i>Stress Scenario Parameters</div>
+      <div class="card-body">
+        <div class="mb-3">
+          <label class="form-label">Current VIX</label>
+          <input type="number" class="form-control" id="st-vix" step="0.1" placeholder="15.0" value="15.0">
+          <div class="form-text">Leave default to use current market VIX</div>
+        </div>
+        <div class="mb-4">
+          <label class="form-label">VIX Multiplier: <strong id="st-mult-label">2.0x</strong></label>
+          <input type="range" class="form-range" id="st-multiplier" min="1.5" max="4.0" step="0.1" value="2.0">
+          <div class="d-flex justify-content-between" style="font-size:0.7rem;color:var(--text-muted);">
+            <span>1.5x</span>
+            <span>2.0x</span>
+            <span>3.0x</span>
+            <span>4.0x</span>
+          </div>
+        </div>
+        <div class="mb-3">
+          <div class="metric-card text-center" style="background:var(--bg-secondary);">
+            <div class="metric-label">Stressed VIX Level</div>
+            <div class="metric-value" id="st-stressed-vix">30.0</div>
+          </div>
+        </div>
+        <button class="btn btn-primary w-100" id="st-run">
+          <i class="bi bi-play-fill me-2"></i>Run Stress Test
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Results -->
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-header"><i class="bi bi-clipboard-data me-2"></i>Stress Test Results</div>
+      <div class="card-body" id="st-results">
+        <p class="text-muted text-center mb-0">Run a stress test to see results.</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  const vixInput = document.getElementById('st-vix');
+  const multSlider = document.getElementById('st-multiplier');
+  const multLabel = document.getElementById('st-mult-label');
+  const stressedVix = document.getElementById('st-stressed-vix');
+  const resultsPanel = document.getElementById('st-results');
+
+  function updateStressedVix() {
+    const vix = parseFloat(vixInput.value) || 15.0;
+    const mult = parseFloat(multSlider.value);
+    multLabel.textContent = mult.toFixed(1) + 'x';
+    stressedVix.textContent = (vix * mult).toFixed(1);
+  }
+
+  vixInput.addEventListener('input', updateStressedVix);
+  multSlider.addEventListener('input', updateStressedVix);
+
+  document.getElementById('st-run').addEventListener('click', async () => {
+    const vix = parseFloat(vixInput.value) || 15.0;
+    const mult = parseFloat(multSlider.value);
+
+    resultsPanel.innerHTML = '<div class="text-center"><div class="spinner-border spinner-border-sm text-primary"></div> Running...</div>';
+
+    const res = await VRP.fetchJSON(`/api/v1/risk/stress-test?vix=${vix}&vix_multiplier=${mult}`);
+
+    if (!res.ok) {
+      VRP.showToast(res.data.error || 'Stress test failed', 'error');
+      resultsPanel.innerHTML = `<div class="text-danger">${res.data.error || 'Failed'}</div>`;
+      return;
+    }
+
+    const s = res.data;
+    const breachClass = s.breach ? 'limit-breach' : 'limit-ok';
+    const pnlClass = VRP.pnlClass(s.estimated_pnl);
+
+    resultsPanel.innerHTML = `
+      <div class="row g-3 mb-4">
+        <div class="col-6">
+          <div class="metric-card text-center">
+            <div class="metric-label">Scenario</div>
+            <div style="font-size:1rem;font-weight:600;">${s.scenario}</div>
+          </div>
+        </div>
+        <div class="col-6">
+          <div class="metric-card text-center">
+            <div class="metric-label">Estimated P&amp;L</div>
+            <div class="${pnlClass}" style="font-size:1.4rem;font-weight:700;">${VRP.formatCurrency(s.estimated_pnl)}</div>
+          </div>
+        </div>
+      </div>
+      <div class="row g-3 mb-4">
+        <div class="col-4">
+          <div class="metric-card text-center">
+            <div class="metric-label">% of AUM</div>
+            <div style="font-size:1.2rem;font-weight:600;">${s.pct_of_aum.toFixed(2)}%</div>
+          </div>
+        </div>
+        <div class="col-4">
+          <div class="metric-card text-center">
+            <div class="metric-label">Max Allowed</div>
+            <div style="font-size:1.2rem;font-weight:600;">${s.max_allowed_pct}%</div>
+          </div>
+        </div>
+        <div class="col-4">
+          <div class="metric-card text-center">
+            <div class="metric-label">Breach?</div>
+            <div class="${breachClass}" style="font-size:1.2rem;font-weight:700;">${s.breach ? 'YES' : 'NO'}</div>
+          </div>
+        </div>
+      </div>
+      ${s.breach ? '<div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i><strong>LIMIT BREACH:</strong> Portfolio exceeds max allowed stress loss. Consider reducing positions or adding hedges.</div>' : '<div class="alert alert-success"><i class="bi bi-check-circle-fill me-2"></i>Portfolio is within stress limits.</div>'}
+      <div class="text-muted" style="font-size:0.75rem;">${s.note}</div>
+    `;
+  });
+})();
+</script>
+{% endblock %}

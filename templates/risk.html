@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+
+{% block title %}Risk Controls — VRP Trading System{% endblock %}
+{% block page_title %}Risk Controls{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+  <!-- Kill Switch -->
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header bg-danger bg-opacity-10">
+        <i class="bi bi-power me-2"></i>Kill Switch
+      </div>
+      <div class="card-body">
+        <div class="text-center mb-4">
+          <div class="metric-label">Current Status</div>
+          <div id="ks-status" class="mt-2">
+            <span class="badge bg-secondary" style="font-size:1.1rem;padding:0.5em 1em;">Loading...</span>
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">Kill Switch Token</label>
+          <input type="password" class="form-control" id="ks-token" placeholder="Enter authorization token">
+        </div>
+
+        <div id="ks-activate-section">
+          <div class="mb-3">
+            <label class="form-label">Reason (optional)</label>
+            <input type="text" class="form-control" id="ks-reason" placeholder="e.g. Market crash, system malfunction">
+          </div>
+          <button class="btn btn-kill-switch w-100" id="ks-activate-btn">
+            <i class="bi bi-exclamation-octagon-fill me-2"></i>ACTIVATE KILL SWITCH
+          </button>
+          <div class="form-text text-center mt-2 text-danger">
+            This will immediately flatten ALL positions with MARKET orders.
+          </div>
+        </div>
+
+        <div id="ks-reset-section" style="display:none;">
+          <div class="alert alert-danger mb-3">
+            <i class="bi bi-exclamation-triangle-fill me-2"></i>
+            <strong>Kill switch is ACTIVE.</strong> All trading is halted. All positions have been flattened.
+          </div>
+          <button class="btn btn-outline-success w-100" id="ks-reset-btn">
+            <i class="bi bi-arrow-counterclockwise me-2"></i>Reset Kill Switch &amp; Re-enable Trading
+          </button>
+        </div>
+
+        <!-- Kill Switch Result -->
+        <div id="ks-result" class="mt-3"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Circuit Breaker -->
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header bg-warning bg-opacity-10">
+        <i class="bi bi-shield-exclamation me-2"></i>Circuit Breaker
+      </div>
+      <div class="card-body">
+        <div class="text-center mb-4">
+          <div class="metric-label">Current Status</div>
+          <div id="cb-status" class="mt-2">
+            <span class="badge bg-secondary" style="font-size:1.1rem;padding:0.5em 1em;">Loading...</span>
+          </div>
+        </div>
+
+        <div id="cb-activate-section">
+          <div class="mb-3">
+            <label class="form-label">Monthly Drawdown %</label>
+            <input type="number" class="form-control" id="cb-drawdown" step="0.1" placeholder="4.2">
+            <div class="form-text">Must be >= 4% to activate</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Reason (optional)</label>
+            <input type="text" class="form-control" id="cb-reason" placeholder="e.g. Monthly P&L drawdown">
+          </div>
+          <button class="btn btn-warning w-100" id="cb-activate-btn">
+            <i class="bi bi-shield-fill-exclamation me-2"></i>Activate Circuit Breaker
+          </button>
+        </div>
+
+        <div id="cb-deactivate-section" style="display:none;">
+          <div class="alert alert-warning mb-3">
+            <i class="bi bi-exclamation-triangle-fill me-2"></i>
+            <strong>Circuit breaker is ACTIVE.</strong> Risk controls have been tightened.
+          </div>
+          <div id="cb-effects" class="mb-3"></div>
+          <button class="btn btn-outline-success w-100" id="cb-deactivate-btn">
+            <i class="bi bi-shield-check me-2"></i>Deactivate Circuit Breaker
+          </button>
+        </div>
+
+        <div id="cb-result" class="mt-3"></div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  document.getElementById('refresh-indicator').style.display = 'inline-flex';
+
+  async function loadStatus() {
+    const res = await VRP.fetchJSON('/api/v1/health');
+    if (!res.ok) return;
+    const h = res.data;
+
+    // Kill Switch status
+    const ksStatus = document.getElementById('ks-status');
+    if (h.kill_switch_active) {
+      ksStatus.innerHTML = '<span class="badge bg-danger" style="font-size:1.1rem;padding:0.5em 1em;">ACTIVE</span>';
+      document.getElementById('ks-activate-section').style.display = 'none';
+      document.getElementById('ks-reset-section').style.display = 'block';
+    } else {
+      ksStatus.innerHTML = '<span class="badge bg-success" style="font-size:1.1rem;padding:0.5em 1em;">ARMED (Ready)</span>';
+      document.getElementById('ks-activate-section').style.display = 'block';
+      document.getElementById('ks-reset-section').style.display = 'none';
+    }
+
+    // Circuit Breaker status
+    const cbStatus = document.getElementById('cb-status');
+    if (h.circuit_breaker) {
+      cbStatus.innerHTML = '<span class="badge bg-warning text-dark" style="font-size:1.1rem;padding:0.5em 1em;">ACTIVE</span>';
+      document.getElementById('cb-activate-section').style.display = 'none';
+      document.getElementById('cb-deactivate-section').style.display = 'block';
+    } else {
+      cbStatus.innerHTML = '<span class="badge bg-secondary" style="font-size:1.1rem;padding:0.5em 1em;">NORMAL</span>';
+      document.getElementById('cb-activate-section').style.display = 'block';
+      document.getElementById('cb-deactivate-section').style.display = 'none';
+    }
+  }
+
+  // Kill Switch — Activate
+  document.getElementById('ks-activate-btn').addEventListener('click', () => {
+    const token = document.getElementById('ks-token').value;
+    if (!token) {
+      VRP.showToast('Enter the kill switch token', 'warning');
+      return;
+    }
+
+    VRP.confirmAction(
+      'ACTIVATE KILL SWITCH',
+      '<div class="text-danger"><strong>WARNING:</strong> This will immediately:<ul>' +
+      '<li>Block ALL new trades</li>' +
+      '<li>Cancel ALL pending orders</li>' +
+      '<li>Flatten ALL positions with MARKET orders</li></ul>' +
+      '<p>This action cannot be easily undone. Are you sure?</p></div>',
+      async () => {
+        const reason = document.getElementById('ks-reason').value || 'manual';
+        const res = await VRP.fetchJSON('/api/v1/kill-switch', {
+          method: 'POST',
+          headers: { 'X-Kill-Switch-Token': token },
+          body: JSON.stringify({ reason }),
+        });
+
+        if (res.ok) {
+          const d = res.data;
+          VRP.showToast(`Kill switch executed: ${d.positions_closed} positions closed`, 'warning');
+          document.getElementById('ks-result').innerHTML = `
+            <div class="alert alert-danger">
+              <strong>Kill switch executed</strong><br>
+              Positions closed: ${d.positions_closed}<br>
+              Positions failed: ${d.positions_failed}<br>
+              Total P&amp;L: ${VRP.formatCurrency(d.total_pnl)}
+            </div>`;
+          loadStatus();
+        } else {
+          VRP.showToast(res.data.error || 'Kill switch failed', 'error');
+        }
+      }
+    );
+  });
+
+  // Kill Switch — Reset
+  document.getElementById('ks-reset-btn').addEventListener('click', async () => {
+    const token = document.getElementById('ks-token').value;
+    if (!token) {
+      VRP.showToast('Enter the kill switch token', 'warning');
+      return;
+    }
+
+    const res = await VRP.fetchJSON('/api/v1/kill-switch/reset', {
+      method: 'POST',
+      headers: { 'X-Kill-Switch-Token': token },
+    });
+
+    if (res.ok) {
+      VRP.showToast('Kill switch disarmed — trading re-enabled', 'success');
+      document.getElementById('ks-result').innerHTML = '';
+      loadStatus();
+    } else {
+      VRP.showToast(res.data.error || 'Reset failed', 'error');
+    }
+  });
+
+  // Circuit Breaker — Activate
+  document.getElementById('cb-activate-btn').addEventListener('click', async () => {
+    const drawdown = parseFloat(document.getElementById('cb-drawdown').value);
+    if (isNaN(drawdown)) {
+      VRP.showToast('Enter the monthly drawdown %', 'warning');
+      return;
+    }
+
+    const reason = document.getElementById('cb-reason').value || 'monthly_drawdown_limit';
+    const res = await VRP.fetchJSON('/api/v1/risk/circuit-breaker', {
+      method: 'POST',
+      body: JSON.stringify({ activate: true, monthly_drawdown_pct: drawdown, reason }),
+    });
+
+    if (res.ok) {
+      const d = res.data;
+      VRP.showToast('Circuit breaker activated', 'warning');
+      document.getElementById('cb-effects').innerHTML = `
+        <table class="table table-sm table-borderless" style="font-size:0.85rem;">
+          <tr><td class="text-muted">Max Positions</td><td>${d.effect.max_concurrent_positions}</td></tr>
+          <tr><td class="text-muted">Min IV-RV Spread</td><td>${d.effect.min_iv_rv_spread_required} pts</td></tr>
+        </table>`;
+      loadStatus();
+    } else {
+      VRP.showToast(res.data.error || 'Activation failed', 'error');
+      document.getElementById('cb-result').innerHTML =
+        `<div class="alert alert-warning">${res.data.error || 'Failed'}</div>`;
+    }
+  });
+
+  // Circuit Breaker — Deactivate
+  document.getElementById('cb-deactivate-btn').addEventListener('click', async () => {
+    const res = await VRP.fetchJSON('/api/v1/risk/circuit-breaker', {
+      method: 'POST',
+      body: JSON.stringify({ activate: false }),
+    });
+
+    if (res.ok) {
+      VRP.showToast('Circuit breaker deactivated — normal mode', 'success');
+      document.getElementById('cb-result').innerHTML = '';
+      loadStatus();
+    } else {
+      VRP.showToast(res.data.error || 'Deactivation failed', 'error');
+    }
+  });
+
+  VRP.autoRefresh(loadStatus, 15000);
+})();
+</script>
+{% endblock %}

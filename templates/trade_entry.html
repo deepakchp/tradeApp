@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+
+{% block title %}New Trade — VRP Trading System{% endblock %}
+{% block page_title %}New Trade Entry{% endblock %}
+
+{% block content %}
+<div class="row">
+  <!-- Trade Form -->
+  <div class="col-lg-8">
+    <form id="trade-form" novalidate>
+      <!-- Symbol & Market Data -->
+      <div class="card mb-3">
+        <div class="card-header"><i class="bi bi-currency-exchange me-2"></i>Symbol &amp; Market Data</div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label">Symbol *</label>
+              <select class="form-select" id="f-symbol" required>
+                <option value="BANKNIFTY">BANKNIFTY</option>
+                <option value="NIFTY">NIFTY</option>
+                <option value="SENSEX">SENSEX</option>
+                <option value="MIDCPNIFTY">MIDCPNIFTY</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Spot Price *</label>
+              <input type="number" class="form-control" id="f-spot" step="0.01" required placeholder="52000.00">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">India VIX *</label>
+              <input type="number" class="form-control" id="f-vix" step="0.01" required placeholder="15.2">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Beta *</label>
+              <input type="number" class="form-control" id="f-beta" step="0.01" required placeholder="1.12" value="1.0">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Lot Size *</label>
+              <input type="number" class="form-control" id="f-lot-size" required placeholder="15" value="15">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Entry DTE *</label>
+              <input type="number" class="form-control" id="f-dte" required placeholder="47" value="47">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- IV Metrics -->
+      <div class="card mb-3">
+        <div class="card-header"><i class="bi bi-bar-chart-line me-2"></i>IV Metrics</div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label">IV 30D *</label>
+              <input type="number" class="form-control" id="f-iv30d" step="0.01" required placeholder="22.5">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">RV 30D *</label>
+              <input type="number" class="form-control" id="f-rv30d" step="0.01" required placeholder="14.2">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">IV Percentile *</label>
+              <input type="number" class="form-control" id="f-ivp" step="0.1" min="0" max="100" required placeholder="67.0">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">IV/RV Ratio *</label>
+              <input type="number" class="form-control" id="f-iv-rv-ratio" step="0.01" required placeholder="1.58">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">16D Put IV *</label>
+              <input type="number" class="form-control" id="f-iv16d" step="0.01" required placeholder="26.0">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">50D ATM IV *</label>
+              <input type="number" class="form-control" id="f-iv50d" step="0.01" required placeholder="22.5">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Optional Fields -->
+      <div class="card mb-3">
+        <div class="card-header"><i class="bi bi-sliders me-2"></i>Optional Parameters</div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label">IV Rank</label>
+              <input type="number" class="form-control" id="f-iv-rank" step="0.1" placeholder="50.0">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Sector (GICS)</label>
+              <input type="text" class="form-control" id="f-sector" placeholder="e.g. Financials">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Avg Pairwise Corr</label>
+              <input type="number" class="form-control" id="f-corr" step="0.01" placeholder="0.0">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Expected Credit</label>
+              <input type="number" class="form-control" id="f-credit" step="0.01" placeholder="0.0">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Transaction Cost</label>
+              <input type="number" class="form-control" id="f-txcost" step="0.01" placeholder="0.0">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-primary btn-lg w-100">
+        <i class="bi bi-send me-2"></i>Submit Trade
+      </button>
+    </form>
+  </div>
+
+  <!-- Result Panel -->
+  <div class="col-lg-4">
+    <div class="card sticky-top" style="top: 1.5rem;">
+      <div class="card-header"><i class="bi bi-info-circle me-2"></i>Trade Result</div>
+      <div class="card-body" id="result-panel">
+        <p class="text-muted text-center mb-0">Submit a trade to see results here.</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  const form = document.getElementById('trade-form');
+  const resultPanel = document.getElementById('result-panel');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    // Build request body
+    const body = {
+      symbol: document.getElementById('f-symbol').value,
+      spot: parseFloat(document.getElementById('f-spot').value),
+      india_vix: parseFloat(document.getElementById('f-vix').value),
+      beta: parseFloat(document.getElementById('f-beta').value),
+      lot_size: parseInt(document.getElementById('f-lot-size').value),
+      entry_dte: parseInt(document.getElementById('f-dte').value),
+      iv_30d: parseFloat(document.getElementById('f-iv30d').value),
+      rv_30d: parseFloat(document.getElementById('f-rv30d').value),
+      iv_percentile: parseFloat(document.getElementById('f-ivp').value),
+      iv_rv_ratio: parseFloat(document.getElementById('f-iv-rv-ratio').value),
+      iv_16d_put: parseFloat(document.getElementById('f-iv16d').value),
+      iv_50d_atm: parseFloat(document.getElementById('f-iv50d').value),
+    };
+
+    // Optional fields
+    const ivRank = document.getElementById('f-iv-rank').value;
+    if (ivRank) body.iv_rank = parseFloat(ivRank);
+    const sector = document.getElementById('f-sector').value;
+    if (sector) body.sector = sector;
+    const corr = document.getElementById('f-corr').value;
+    if (corr) body.avg_pairwise_corr = parseFloat(corr);
+    const credit = document.getElementById('f-credit').value;
+    if (credit) body.expected_credit = parseFloat(credit);
+    const txcost = document.getElementById('f-txcost').value;
+    if (txcost) body.transaction_cost = parseFloat(txcost);
+
+    // Validate required fields
+    const required = ['spot', 'india_vix', 'iv_30d', 'rv_30d', 'iv_percentile', 'iv_rv_ratio', 'iv_16d_put', 'iv_50d_atm'];
+    for (const field of required) {
+      if (isNaN(body[field])) {
+        VRP.showToast(`Missing required field: ${field}`, 'error');
+        return;
+      }
+    }
+
+    resultPanel.innerHTML = '<div class="text-center"><div class="spinner-border spinner-border-sm text-primary"></div> Submitting...</div>';
+
+    const res = await VRP.fetchJSON('/api/v1/trade/enter', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+
+    if (res.ok) {
+      const d = res.data;
+      VRP.showToast('Position opened successfully!', 'success');
+      resultPanel.innerHTML = `
+        <div class="mb-3">
+          <span class="badge bg-success mb-2">POSITION OPENED</span>
+        </div>
+        <table class="table table-sm table-borderless" style="font-size:0.85rem;">
+          <tr><td class="text-muted">Position ID</td><td><code>${d.position_id}</code></td></tr>
+          <tr><td class="text-muted">Strategy</td><td><strong>${d.strategy}</strong></td></tr>
+          <tr><td class="text-muted">Short Delta</td><td>${d.short_delta}</td></tr>
+          <tr><td class="text-muted">Wing Delta</td><td>${d.wing_delta}</td></tr>
+        </table>
+        <hr>
+        <div class="mb-2" style="font-size:0.8rem;font-weight:600;color:var(--text-muted);">VRP GATE</div>
+        <table class="table table-sm table-borderless" style="font-size:0.85rem;">
+          <tr><td class="text-muted">IV-RV Spread</td><td>${d.vrp_gate.iv_rv_spread} pts</td></tr>
+          <tr><td class="text-muted">IV Percentile</td><td>${d.vrp_gate.ivp}%</td></tr>
+          <tr><td class="text-muted">IV/RV Ratio</td><td>${d.vrp_gate.iv_rv_ratio}</td></tr>
+          <tr><td class="text-muted">Tightened Mode</td><td>${d.vrp_gate.tightened_mode ? 'YES' : 'NO'}</td></tr>
+        </table>
+      `;
+    } else {
+      const d = res.data;
+      VRP.showToast(d.error || 'Trade entry failed', 'error');
+
+      let html = `<div class="mb-3"><span class="badge bg-danger mb-2">REJECTED</span></div>
+        <p style="font-size:0.85rem;">${d.error}</p>`;
+
+      if (d.failures) {
+        html += `<div class="mb-2" style="font-size:0.8rem;font-weight:600;color:var(--text-muted);">FAILURES</div>
+          <ul style="font-size:0.85rem;" class="text-danger">
+            ${d.failures.map(f => `<li>${f}</li>`).join('')}
+          </ul>`;
+      }
+      if (d.gate) {
+        html += `<div class="mb-2" style="font-size:0.8rem;font-weight:600;color:var(--text-muted);">GATE METRICS</div>
+          <table class="table table-sm table-borderless" style="font-size:0.85rem;">
+            <tr><td class="text-muted">IV-RV Spread</td><td>${d.gate.iv_rv_spread} pts</td></tr>
+            <tr><td class="text-muted">IV Percentile</td><td>${d.gate.ivp}%</td></tr>
+            <tr><td class="text-muted">IV/RV Ratio</td><td>${d.gate.iv_rv_ratio}</td></tr>
+            <tr><td class="text-muted">Spread %</td><td>${d.gate.spread_pct}%</td></tr>
+          </table>`;
+      }
+      resultPanel.innerHTML = html;
+    }
+  });
+})();
+</script>
+{% endblock %}

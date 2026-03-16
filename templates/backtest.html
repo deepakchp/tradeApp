@@ -1,0 +1,694 @@
+{% extends "base.html" %}
+
+{% block title %}Backtest &mdash; VRP Trading System{% endblock %}
+{% block page_title %}VRP Strategy Backtest{% endblock %}
+
+{% block content %}
+<!-- Row 0: Run Controls -->
+<div class="row g-3 mb-4">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-clock-history me-2"></i>Backtest Configuration</span>
+        <div>
+          <span id="bt-status" class="badge bg-secondary me-2">Ready</span>
+          <button class="btn btn-sm btn-primary" id="btn-run-backtest" onclick="runBacktest()">
+            <i class="bi bi-play-fill me-1"></i>Run Backtest
+          </button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="row g-3">
+          <div class="col-md-3">
+            <label class="form-label">Symbol</label>
+            <select class="form-select" id="bt-symbol" onchange="updateSymbolInfo()">
+              <option value="ALL_NIFTY100">All Nifty 100 Stocks</option>
+              {% for sym in scan_symbols %}
+              <option value="{{ sym }}"{% if sym == 'NIFTY' %} selected{% endif %}>{{ sym }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">Initial AUM (INR)</label>
+            <input type="number" class="form-control" id="bt-aum"
+                   value="10000000" step="1000000">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">Start Date</label>
+            <input type="date" class="form-control" id="bt-start">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">End Date</label>
+            <input type="date" class="form-control" id="bt-end">
+          </div>
+          <div class="col-md-3 d-flex align-items-end">
+            <div id="bt-runtime" class="text-muted" style="font-size:0.8rem;">
+              NIFTY &bull; 25 lot size &bull; 45 DTE entry
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Results Container (hidden until backtest runs) -->
+<div id="bt-results" style="display:none;">
+
+  <!-- Row 1: Primary KPI Cards -->
+  <div class="row g-3 mb-4">
+    <div class="col-md-2">
+      <div class="metric-card">
+        <div class="metric-label">Total Return</div>
+        <div class="metric-value" id="kpi-return">--</div>
+      </div>
+    </div>
+    <div class="col-md-2">
+      <div class="metric-card">
+        <div class="metric-label">CAGR</div>
+        <div class="metric-value" id="kpi-cagr">--</div>
+      </div>
+    </div>
+    <div class="col-md-2">
+      <div class="metric-card">
+        <div class="metric-label">Sharpe Ratio</div>
+        <div class="metric-value" id="kpi-sharpe">--</div>
+      </div>
+    </div>
+    <div class="col-md-2">
+      <div class="metric-card">
+        <div class="metric-label">Max Drawdown</div>
+        <div class="metric-value" id="kpi-maxdd">--</div>
+      </div>
+    </div>
+    <div class="col-md-2">
+      <div class="metric-card">
+        <div class="metric-label">Win Rate</div>
+        <div class="metric-value" id="kpi-winrate">--</div>
+      </div>
+    </div>
+    <div class="col-md-2">
+      <div class="metric-card">
+        <div class="metric-label">Total Trades</div>
+        <div class="metric-value" id="kpi-trades">--</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 2: Secondary KPIs -->
+  <div class="row g-3 mb-4">
+    <div class="col-md-3">
+      <div class="metric-card">
+        <div class="metric-label">Sortino Ratio</div>
+        <div class="metric-value" id="kpi-sortino">--</div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="metric-card">
+        <div class="metric-label">Profit Factor</div>
+        <div class="metric-value" id="kpi-pf">--</div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="metric-card">
+        <div class="metric-label">Avg Trade P&amp;L</div>
+        <div class="metric-value" id="kpi-avgpnl">--</div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="metric-card">
+        <div class="metric-label">Avg Holding Days</div>
+        <div class="metric-value" id="kpi-holddays">--</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 2a: Per-Symbol Summary (batch mode only) -->
+  <div class="row g-3 mb-4" id="per-symbol-section" style="display:none;">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-bar-chart me-2"></i>Per-Symbol Performance</span>
+          <span class="text-muted" id="symbol-count" style="font-size:0.8rem;"></span>
+        </div>
+        <div class="card-body p-0">
+          <div style="overflow-x:auto; max-height:400px; overflow-y:auto;">
+            <table class="table table-dark-custom table-hover table-sm mb-0">
+              <thead style="position:sticky; top:0; z-index:1;">
+                <tr>
+                  <th>Symbol</th>
+                  <th>Sector</th>
+                  <th>Trades</th>
+                  <th>Win Rate</th>
+                  <th>Total Return</th>
+                  <th>CAGR</th>
+                  <th>Max DD</th>
+                  <th>Sharpe</th>
+                  <th>Profit Factor</th>
+                  <th>Avg P&amp;L</th>
+                </tr>
+              </thead>
+              <tbody id="per-symbol-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 3: Equity Curve Chart -->
+  <div class="row g-3 mb-4">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header">
+          <i class="bi bi-graph-up me-2"></i>Equity Curve &amp; Drawdown
+        </div>
+        <div class="card-body">
+          <canvas id="equity-chart" height="100"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 4: Monthly Returns Heatmap -->
+  <div class="row g-3 mb-4">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header">
+          <i class="bi bi-calendar3 me-2"></i>Monthly Returns (%)
+        </div>
+        <div class="card-body p-0">
+          <div id="monthly-heatmap" style="overflow-x:auto;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 5: Trade Log -->
+  <div class="row g-3 mb-4">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header">
+          <i class="bi bi-list-columns-reverse me-2"></i>Trade Log
+          <span class="text-muted ms-2" id="trade-count" style="font-size:0.8rem;"></span>
+        </div>
+        <div class="card-body p-0">
+          <div style="overflow-x:auto;">
+            <table class="table table-dark-custom table-hover mb-0">
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Entry</th>
+                  <th>Exit</th>
+                  <th>Strategy</th>
+                  <th>Spot In</th>
+                  <th>Spot Out</th>
+                  <th>VIX In</th>
+                  <th>VIX Out</th>
+                  <th>Lots</th>
+                  <th>Credit</th>
+                  <th>P&amp;L (pts)</th>
+                  <th>P&amp;L (INR)</th>
+                  <th>Days</th>
+                  <th>Exit Reason</th>
+                </tr>
+              </thead>
+              <tbody id="trade-log-tbody">
+                <tr><td colspan="14" class="text-center text-muted py-3">
+                  Run backtest to see results
+                </td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 6: VRP Signal History -->
+  <div class="row g-3 mb-4">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header">
+          <i class="bi bi-flag me-2"></i>VRP Gate Signal History (IV vs RV)
+        </div>
+        <div class="card-body">
+          <canvas id="signal-chart" height="60"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /bt-results -->
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  // Lot sizes passed from server
+  var LOT_SIZES = {{ lot_sizes | tojson }};
+
+  // Set default dates: 1 year ago to today
+  var today = new Date();
+  var oneYearAgo = new Date(today);
+  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+  document.getElementById('bt-end').value = today.toISOString().split('T')[0];
+  document.getElementById('bt-start').value = oneYearAgo.toISOString().split('T')[0];
+
+  var equityChart = null;
+  var signalChart = null;
+
+  // Update info line when symbol changes
+  window.updateSymbolInfo = function() {
+    var sym = document.getElementById('bt-symbol').value;
+    var infoEl = document.getElementById('bt-runtime');
+    if (sym === 'ALL_NIFTY100') {
+      infoEl.textContent = 'All Nifty 100 Stocks \u2022 Equal allocation \u2022 45 DTE entry';
+    } else {
+      var lot = LOT_SIZES[sym] || '?';
+      infoEl.textContent = sym + ' \u2022 ' + lot + ' lot size \u2022 45 DTE entry';
+    }
+  };
+
+  window.runBacktest = async function() {
+    var btn = document.getElementById('btn-run-backtest');
+    var statusEl = document.getElementById('bt-status');
+    btn.disabled = true;
+    statusEl.textContent = 'Running...';
+    statusEl.className = 'badge bg-warning text-dark me-2';
+    document.getElementById('bt-runtime').textContent = 'Computing...';
+
+    var sym = document.getElementById('bt-symbol').value;
+    var isBatch = sym === 'ALL_NIFTY100';
+
+    var body = {
+      initial_aum: parseFloat(document.getElementById('bt-aum').value) || 10000000,
+      symbol: isBatch ? 'NIFTY' : sym,
+      mode: isBatch ? 'batch' : 'single',
+    };
+    var startVal = document.getElementById('bt-start').value;
+    var endVal = document.getElementById('bt-end').value;
+    if (startVal) body.start_date = startVal;
+    if (endVal) body.end_date = endVal;
+
+    try {
+      var res = await VRP.fetchJSON('/api/v1/backtest/run', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        statusEl.textContent = 'Failed';
+        statusEl.className = 'badge bg-danger me-2';
+        btn.disabled = false;
+        document.getElementById('bt-runtime').textContent =
+          res.data.error || 'Backtest failed';
+        VRP.showToast('Backtest failed: ' + (res.data.error || 'Unknown error'), 'error');
+        return;
+      }
+
+      statusEl.textContent = 'Completed';
+      statusEl.className = 'badge bg-success me-2';
+      var modeLabel = res.data.mode === 'batch' ? 'Batch' : sym;
+      document.getElementById('bt-runtime').textContent =
+        modeLabel + ' \u2022 ' + res.data.run_time_sec + 's \u2022 ' +
+        res.data.summary.total_trades + ' trades';
+      btn.disabled = false;
+
+      VRP.showToast('Backtest completed: ' + res.data.summary.total_trades +
+        ' trades, ' + res.data.summary.total_return_pct + '% return', 'success');
+
+      loadResults();
+    } catch (err) {
+      statusEl.textContent = 'Error';
+      statusEl.className = 'badge bg-danger me-2';
+      btn.disabled = false;
+      VRP.showToast('Backtest error: ' + err.message, 'error');
+    }
+  };
+
+  async function loadResults() {
+    var res = await VRP.fetchJSON('/api/v1/backtest/results');
+    if (!res.ok || !res.data.available) return;
+
+    document.getElementById('bt-results').style.display = 'block';
+    var s = res.data.summary;
+    var isBatch = res.data.mode === 'batch';
+
+    // Primary KPIs
+    var retEl = document.getElementById('kpi-return');
+    retEl.textContent = s.total_return_pct.toFixed(1) + '%';
+    retEl.className = 'metric-value ' + VRP.pnlClass(s.total_return_pct);
+
+    var cagrEl = document.getElementById('kpi-cagr');
+    cagrEl.textContent = s.cagr.toFixed(1) + '%';
+    cagrEl.className = 'metric-value ' + VRP.pnlClass(s.cagr);
+
+    document.getElementById('kpi-sharpe').textContent = s.sharpe_ratio.toFixed(2);
+
+    var ddEl = document.getElementById('kpi-maxdd');
+    ddEl.textContent = s.max_drawdown_pct.toFixed(1) + '%';
+    ddEl.className = 'metric-value pnl-negative';
+
+    document.getElementById('kpi-winrate').textContent = s.win_rate.toFixed(0) + '%';
+    document.getElementById('kpi-trades').textContent = s.total_trades;
+
+    // Secondary KPIs
+    document.getElementById('kpi-sortino').textContent = s.sortino_ratio.toFixed(2);
+    var pfVal = s.profit_factor === Infinity ? 'Inf' : s.profit_factor.toFixed(2);
+    document.getElementById('kpi-pf').textContent = pfVal;
+
+    var avgPnlEl = document.getElementById('kpi-avgpnl');
+    avgPnlEl.textContent = VRP.formatCurrency(s.avg_trade_pnl);
+    avgPnlEl.className = 'metric-value ' + VRP.pnlClass(s.avg_trade_pnl);
+
+    document.getElementById('kpi-holddays').textContent =
+      s.avg_holding_days.toFixed(0) + 'd';
+
+    // Per-symbol summary table (batch mode only)
+    var perSymSection = document.getElementById('per-symbol-section');
+    if (isBatch && res.data.per_symbol_summary && res.data.per_symbol_summary.length > 0) {
+      perSymSection.style.display = '';
+      renderPerSymbolTable(res.data.per_symbol_summary);
+    } else {
+      perSymSection.style.display = 'none';
+    }
+
+    // Charts and tables
+    renderEquityCurve(res.data.equity_curve);
+    renderMonthlyHeatmap(res.data.monthly_returns);
+    renderTradeLog(res.data.trades);
+
+    // Signal chart: only show for single-symbol mode
+    var signalSection = document.getElementById('signal-chart').closest('.row');
+    if (isBatch) {
+      signalSection.style.display = 'none';
+    } else {
+      signalSection.style.display = '';
+      renderSignalChart(res.data.signal_history);
+    }
+  }
+
+  function renderPerSymbolTable(symbols) {
+    var tbody = document.getElementById('per-symbol-tbody');
+    document.getElementById('symbol-count').textContent =
+      symbols.length + ' symbol' + (symbols.length !== 1 ? 's' : '');
+
+    tbody.innerHTML = symbols.map(function(s) {
+      var retCls = VRP.pnlClass(s.total_return_pct);
+      var cagrCls = VRP.pnlClass(s.cagr);
+      var pnlCls = VRP.pnlClass(s.avg_trade_pnl);
+      var pfVal = s.profit_factor === Infinity ? 'Inf' : s.profit_factor.toFixed(2);
+
+      return '<tr>' +
+        '<td><strong>' + s.symbol + '</strong></td>' +
+        '<td><span class="text-muted" style="font-size:0.8rem;">' +
+          (s.sector || '--') + '</span></td>' +
+        '<td>' + s.total_trades + '</td>' +
+        '<td>' + s.win_rate.toFixed(0) + '%</td>' +
+        '<td class="' + retCls + '">' + s.total_return_pct.toFixed(1) + '%</td>' +
+        '<td class="' + cagrCls + '">' + s.cagr.toFixed(1) + '%</td>' +
+        '<td class="pnl-negative">' + s.max_drawdown_pct.toFixed(1) + '%</td>' +
+        '<td>' + s.sharpe_ratio.toFixed(2) + '</td>' +
+        '<td>' + pfVal + '</td>' +
+        '<td class="' + pnlCls + '">' + VRP.formatCurrency(s.avg_trade_pnl) + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  function renderEquityCurve(curve) {
+    var ctx = document.getElementById('equity-chart').getContext('2d');
+    if (equityChart) equityChart.destroy();
+
+    var labels = curve.map(function(e) { return e.date; });
+    var navData = curve.map(function(e) { return e.nav; });
+    var ddData = curve.map(function(e) { return e.drawdown; });
+
+    equityChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: 'NAV (INR)',
+            data: navData,
+            borderColor: '#4dabf7',
+            backgroundColor: 'rgba(77, 171, 247, 0.08)',
+            fill: true,
+            tension: 0.1,
+            pointRadius: 0,
+            borderWidth: 2,
+            yAxisID: 'y',
+          },
+          {
+            label: 'Drawdown (%)',
+            data: ddData,
+            borderColor: '#ff6b6b',
+            backgroundColor: 'rgba(255, 107, 107, 0.08)',
+            fill: true,
+            tension: 0.1,
+            pointRadius: 0,
+            borderWidth: 1,
+            yAxisID: 'y1',
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: {
+            labels: { color: '#e0e6ed', font: { size: 11 } }
+          },
+          tooltip: {
+            backgroundColor: '#1e2d3d',
+            titleColor: '#e0e6ed',
+            bodyColor: '#8899aa',
+            borderColor: '#2a3a4a',
+            borderWidth: 1,
+            callbacks: {
+              label: function(ctx) {
+                if (ctx.datasetIndex === 0) {
+                  return 'NAV: ' + (ctx.parsed.y / 1e5).toFixed(1) + 'L';
+                }
+                return 'DD: ' + ctx.parsed.y.toFixed(1) + '%';
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            ticks: { color: '#8899aa', maxTicksLimit: 12, font: { size: 10 } },
+            grid: { color: 'rgba(42, 58, 74, 0.5)' },
+          },
+          y: {
+            position: 'left',
+            ticks: {
+              color: '#4dabf7',
+              callback: function(v) { return (v / 1e5).toFixed(0) + 'L'; }
+            },
+            grid: { color: 'rgba(42, 58, 74, 0.3)' },
+          },
+          y1: {
+            position: 'right',
+            ticks: {
+              color: '#ff6b6b',
+              callback: function(v) { return v.toFixed(1) + '%'; }
+            },
+            grid: { display: false },
+          }
+        }
+      }
+    });
+  }
+
+  function renderMonthlyHeatmap(monthly) {
+    var years = {};
+    monthly.forEach(function(m) {
+      if (!years[m.year]) years[m.year] = {};
+      years[m.year][m.month] = m.return_pct;
+    });
+
+    var monthNames = ['Jan','Feb','Mar','Apr','May','Jun',
+                      'Jul','Aug','Sep','Oct','Nov','Dec'];
+    var yearKeys = Object.keys(years).sort();
+
+    var html = '<table class="table table-dark-custom table-sm mb-0"' +
+               ' style="font-size:0.8rem;">';
+    html += '<thead><tr><th style="min-width:60px;"></th>';
+    monthNames.forEach(function(m) {
+      html += '<th class="text-center" style="min-width:55px;">' + m + '</th>';
+    });
+    html += '<th class="text-center" style="min-width:60px;">Total</th></tr></thead><tbody>';
+
+    yearKeys.forEach(function(year) {
+      html += '<tr><td><strong>' + year + '</strong></td>';
+      var yearTotal = 0;
+      for (var m = 1; m <= 12; m++) {
+        var val = years[year][m];
+        if (val !== undefined) {
+          yearTotal += val;
+          var intensity = Math.min(Math.abs(val) / 3, 0.6);
+          var bg = val >= 0
+            ? 'rgba(81, 207, 102, ' + intensity + ')'
+            : 'rgba(255, 107, 107, ' + intensity + ')';
+          var cls = val >= 0 ? 'pnl-positive' : 'pnl-negative';
+          html += '<td class="text-center ' + cls + '" style="background:' +
+                  bg + '; font-family:Consolas,monospace;">' +
+                  val.toFixed(1) + '%</td>';
+        } else {
+          html += '<td class="text-center text-muted">--</td>';
+        }
+      }
+      var totalCls = yearTotal >= 0 ? 'pnl-positive' : 'pnl-negative';
+      html += '<td class="text-center ' + totalCls + '" style="font-weight:600;">' +
+              yearTotal.toFixed(1) + '%</td>';
+      html += '</tr>';
+    });
+
+    html += '</tbody></table>';
+    document.getElementById('monthly-heatmap').innerHTML = html;
+  }
+
+  function renderTradeLog(trades) {
+    var tbody = document.getElementById('trade-log-tbody');
+    document.getElementById('trade-count').textContent =
+      trades.length + ' trade' + (trades.length !== 1 ? 's' : '');
+
+    if (!trades || trades.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="14" class="text-center text-muted py-3">' +
+                        'No trades generated</td></tr>';
+      return;
+    }
+
+    var strategyColors = {
+      'iron_condor': 'bg-info text-dark',
+      'strangle': 'bg-warning text-dark',
+      'put_spread': 'bg-secondary',
+    };
+
+    tbody.innerHTML = trades.map(function(t) {
+      var pnlCls = VRP.pnlClass(t.pnl_inr);
+      var ptsCls = VRP.pnlClass(t.pnl_points);
+      var badgeCls = strategyColors[t.strategy] || 'bg-secondary';
+      var stratLabel = t.strategy.replace('_', ' ').toUpperCase();
+
+      return '<tr>' +
+        '<td><strong>' + (t.symbol || 'NIFTY') + '</strong></td>' +
+        '<td style="white-space:nowrap;">' + t.entry_date + '</td>' +
+        '<td style="white-space:nowrap;">' + (t.exit_date || '--') + '</td>' +
+        '<td><span class="badge ' + badgeCls + '">' + stratLabel + '</span></td>' +
+        '<td>' + Number(t.entry_spot).toLocaleString('en-IN') + '</td>' +
+        '<td>' + Number(t.exit_spot).toLocaleString('en-IN') + '</td>' +
+        '<td>' + t.entry_vix + '</td>' +
+        '<td>' + t.exit_vix + '</td>' +
+        '<td>' + t.lots + '</td>' +
+        '<td>' + t.credit.toFixed(1) + '</td>' +
+        '<td class="' + ptsCls + '">' + t.pnl_points.toFixed(1) + '</td>' +
+        '<td class="' + pnlCls + '">' + VRP.formatCurrency(t.pnl_inr) + '</td>' +
+        '<td>' + t.holding_days + '</td>' +
+        '<td><span class="badge bg-secondary" style="font-size:0.7rem;">' +
+          t.exit_reason.replace(/_/g, ' ') + '</span></td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  function renderSignalChart(signals) {
+    var ctx = document.getElementById('signal-chart').getContext('2d');
+    if (signalChart) signalChart.destroy();
+
+    if (!signals || signals.length === 0) return;
+
+    var labels = signals.map(function(s) { return s.date; });
+    var ivData = signals.map(function(s) { return s.iv; });
+    var rvData = signals.map(function(s) { return s.rv; });
+
+    // Gate-passed points
+    var gateData = signals.map(function(s) {
+      return s.gate_passed ? s.iv : null;
+    });
+
+    signalChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: 'IV (VIX proxy)',
+            data: ivData,
+            borderColor: '#4dabf7',
+            pointRadius: 0,
+            borderWidth: 2,
+            tension: 0.2,
+          },
+          {
+            label: 'RV (30D)',
+            data: rvData,
+            borderColor: '#ff922b',
+            pointRadius: 0,
+            borderWidth: 2,
+            tension: 0.2,
+          },
+          {
+            label: 'Gate Passed',
+            data: gateData,
+            borderColor: 'rgba(0,0,0,0)',
+            backgroundColor: '#51cf66',
+            pointBackgroundColor: '#51cf66',
+            pointRadius: 4,
+            pointBorderWidth: 0,
+            showLine: false,
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: {
+            labels: { color: '#e0e6ed', font: { size: 11 } }
+          },
+          tooltip: {
+            backgroundColor: '#1e2d3d',
+            titleColor: '#e0e6ed',
+            bodyColor: '#8899aa',
+            borderColor: '#2a3a4a',
+            borderWidth: 1,
+            callbacks: {
+              afterBody: function(items) {
+                var idx = items[0].dataIndex;
+                var sig = signals[idx];
+                if (!sig) return '';
+                var lines = [
+                  'IV-RV Spread: ' + sig.iv_rv_spread.toFixed(1),
+                  'IVP: ' + sig.ivp.toFixed(0) + '%',
+                  'IV/RV: ' + sig.iv_rv_ratio.toFixed(2),
+                  'Gate: ' + (sig.gate_passed ? 'PASSED' : 'FAILED'),
+                ];
+                if (sig.failures && sig.failures.length > 0) {
+                  lines.push('Failures: ' + sig.failures.join(', '));
+                }
+                return lines;
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            ticks: { color: '#8899aa', maxTicksLimit: 12, font: { size: 10 } },
+            grid: { color: 'rgba(42, 58, 74, 0.5)' },
+          },
+          y: {
+            title: { display: true, text: 'Volatility (%)', color: '#8899aa' },
+            ticks: { color: '#8899aa' },
+            grid: { color: 'rgba(42, 58, 74, 0.3)' },
+          }
+        }
+      }
+    });
+  }
+
+  // Load any cached results on page load
+  loadResults();
+})();
+</script>
+{% endblock %}
