@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VRP Trading System — Connect Broker</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-primary: #0f1923;
+      --bg-secondary: #1a2332;
+      --bg-card: #1e2d3d;
+      --border-color: #2a3a4a;
+      --text-primary: #e0e6ed;
+      --text-muted: #8899aa;
+      --accent-blue: #4dabf7;
+      --accent-green: #51cf66;
+      --accent-red: #ff6b6b;
+      --accent-orange: #ff922b;
+      --kite-orange: #ff6f00;
+      --kite-orange-hover: #e65100;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      overflow: hidden;
+    }
+
+    /* ── Animated Background ──────────────────────────── */
+    .bg-grid {
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(77, 171, 247, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(77, 171, 247, 0.03) 1px, transparent 1px);
+      background-size: 60px 60px;
+      animation: gridMove 20s linear infinite;
+    }
+
+    @keyframes gridMove {
+      0% { background-position: 0 0; }
+      100% { background-position: 60px 60px; }
+    }
+
+    /* Floating orbs */
+    .orb {
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(80px);
+      opacity: 0.15;
+      animation: float 8s ease-in-out infinite;
+    }
+    .orb-1 {
+      width: 400px; height: 400px;
+      background: var(--accent-blue);
+      top: -100px; left: -100px;
+      animation-delay: 0s;
+    }
+    .orb-2 {
+      width: 300px; height: 300px;
+      background: var(--kite-orange);
+      bottom: -80px; right: -80px;
+      animation-delay: -4s;
+    }
+    .orb-3 {
+      width: 200px; height: 200px;
+      background: var(--accent-green);
+      top: 50%; left: 60%;
+      animation-delay: -2s;
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translate(0, 0) scale(1); }
+      25% { transform: translate(30px, -20px) scale(1.05); }
+      50% { transform: translate(-20px, 30px) scale(0.95); }
+      75% { transform: translate(15px, 15px) scale(1.02); }
+    }
+
+    /* ── Login Card ───────────────────────────────────── */
+    .login-container {
+      position: relative;
+      z-index: 10;
+      width: 100%;
+      max-width: 460px;
+      padding: 0 1.5rem;
+    }
+
+    .login-card {
+      background: rgba(30, 45, 61, 0.65);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border: 1px solid rgba(77, 171, 247, 0.15);
+      border-radius: 20px;
+      padding: 3rem 2.5rem;
+      box-shadow:
+        0 24px 80px rgba(0, 0, 0, 0.5),
+        0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+      animation: slideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(40px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── Brand ────────────────────────────────────────── */
+    .brand-icon {
+      width: 64px;
+      height: 64px;
+      border-radius: 16px;
+      background: linear-gradient(135deg, var(--accent-blue), #228be6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 1.5rem;
+      font-size: 1.75rem;
+      color: #fff;
+      box-shadow: 0 8px 32px rgba(77, 171, 247, 0.3);
+    }
+
+    .brand-title {
+      text-align: center;
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin-bottom: 0.25rem;
+      letter-spacing: -0.5px;
+    }
+
+    .brand-subtitle {
+      text-align: center;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-bottom: 2rem;
+    }
+
+    /* ── Status Card ──────────────────────────────────── */
+    .status-strip {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 2rem;
+    }
+
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.4rem 0;
+      font-size: 0.82rem;
+    }
+
+    .status-row:not(:last-child) {
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .status-label {
+      color: var(--text-muted);
+    }
+
+    .status-value {
+      font-weight: 600;
+    }
+
+    .status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+
+    .dot-disconnected { background: var(--accent-red); box-shadow: 0 0 6px var(--accent-red); }
+    .dot-connected { background: var(--accent-green); box-shadow: 0 0 6px var(--accent-green); }
+    .dot-ready { background: var(--accent-blue); box-shadow: 0 0 6px var(--accent-blue); }
+
+    /* ── Connect Button ──────────────────────────────── */
+    .btn-kite {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+      width: 100%;
+      padding: 1rem 1.5rem;
+      font-size: 1rem;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+      color: #fff;
+      background: linear-gradient(135deg, var(--kite-orange), #ff8f00);
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      text-decoration: none;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .btn-kite::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, transparent, rgba(255,255,255,0.15), transparent);
+      transform: translateX(-100%);
+      transition: transform 0.5s;
+    }
+
+    .btn-kite:hover {
+      background: linear-gradient(135deg, var(--kite-orange-hover), var(--kite-orange));
+      box-shadow: 0 8px 32px rgba(255, 111, 0, 0.35);
+      transform: translateY(-2px);
+      color: #fff;
+      text-decoration: none;
+    }
+
+    .btn-kite:hover::before {
+      transform: translateX(100%);
+    }
+
+    .btn-kite:active {
+      transform: translateY(0);
+    }
+
+    .btn-kite .kite-logo {
+      font-size: 1.25rem;
+    }
+
+    /* ── Divider ──────────────────────────────────────── */
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin: 1.5rem 0;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .divider::before, .divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border-color);
+    }
+
+    /* ── Paper Mode Button ────────────────────────────── */
+    .btn-paper {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      width: 100%;
+      padding: 0.85rem 1.25rem;
+      font-size: 0.9rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      background: transparent;
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-decoration: none;
+    }
+
+    .btn-paper:hover {
+      color: var(--text-primary);
+      border-color: var(--accent-blue);
+      background: rgba(77, 171, 247, 0.06);
+      text-decoration: none;
+    }
+
+    /* ── Footer ───────────────────────────────────────── */
+    .login-footer {
+      text-align: center;
+      margin-top: 1.75rem;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      opacity: 0.7;
+      line-height: 1.6;
+    }
+
+    .login-footer a {
+      color: var(--accent-blue);
+      text-decoration: none;
+    }
+
+    .login-footer a:hover {
+      text-decoration: underline;
+    }
+
+    /* ── Connected State ──────────────────────────────── */
+    .connected-card {
+      text-align: center;
+    }
+
+    .connected-icon {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent-green), #40c057);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 1.25rem;
+      font-size: 2rem;
+      color: #fff;
+      box-shadow: 0 8px 32px rgba(81, 207, 102, 0.3);
+      animation: scaleIn 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes scaleIn {
+      from { opacity: 0; transform: scale(0.5); }
+      to { opacity: 1; transform: scale(1); }
+    }
+
+    .connected-user {
+      font-size: 1.2rem;
+      font-weight: 700;
+      margin-bottom: 0.25rem;
+    }
+
+    .connected-id {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-bottom: 1.5rem;
+    }
+
+    .btn-dashboard {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.85rem 2rem;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #fff;
+      background: linear-gradient(135deg, var(--accent-blue), #228be6);
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: all 0.3s;
+      text-decoration: none;
+    }
+
+    .btn-dashboard:hover {
+      box-shadow: 0 8px 32px rgba(77, 171, 247, 0.35);
+      transform: translateY(-2px);
+      color: #fff;
+      text-decoration: none;
+    }
+
+    /* ── Error State ──────────────────────────────────── */
+    .error-banner {
+      background: rgba(255, 107, 107, 0.1);
+      border: 1px solid rgba(255, 107, 107, 0.3);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      font-size: 0.85rem;
+      color: var(--accent-red);
+      animation: shake 0.5s ease;
+    }
+
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      20%, 60% { transform: translateX(-4px); }
+      40%, 80% { transform: translateX(4px); }
+    }
+
+    /* ── Pulse ring on brand icon  ────────────────────── */
+    .brand-icon::after {
+      content: '';
+      position: absolute;
+      width: 64px;
+      height: 64px;
+      border-radius: 16px;
+      border: 2px solid var(--accent-blue);
+      animation: pulseRing 2.5s ease-out infinite;
+    }
+
+    @keyframes pulseRing {
+      0% { transform: scale(1); opacity: 0.6; }
+      100% { transform: scale(1.5); opacity: 0; }
+    }
+
+    /* ── Loading spinner ──────────────────────────────── */
+    .spinner-kite {
+      width: 20px;
+      height: 20px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      display: none;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .btn-kite.loading .spinner-kite { display: block; }
+    .btn-kite.loading .btn-text { display: none; }
+  </style>
+</head>
+<body>
+
+  <!-- Background Effects -->
+  <div class="bg-grid"></div>
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="orb orb-3"></div>
+
+  <div class="login-container">
+    <div class="login-card">
+
+      {% if connected %}
+        <!-- ═══ CONNECTED STATE ═══ -->
+        <div class="connected-card">
+          <div class="connected-icon">
+            <i class="bi bi-check-lg"></i>
+          </div>
+          <div class="connected-user">{{ user_name or "Trader" }}</div>
+          <div class="connected-id">{{ user_id or "" }} · Zerodha Kite</div>
+          <a href="{{ url_for('dashboard') }}" class="btn-dashboard" id="btn-go-dashboard">
+            <i class="bi bi-speedometer2"></i> Open Dashboard
+          </a>
+        </div>
+
+      {% else %}
+        <!-- ═══ LOGIN STATE ═══ -->
+        <div class="brand-icon" style="position:relative;">
+          <i class="bi bi-graph-up-arrow"></i>
+        </div>
+        <h1 class="brand-title">VRP Trading System</h1>
+        <p class="brand-subtitle">Volatility Risk Premium • Institutional Grade</p>
+
+        {% if error %}
+        <div class="error-banner">
+          <i class="bi bi-exclamation-triangle-fill"></i>
+          <span>{{ error }}</span>
+        </div>
+        {% endif %}
+
+        <!-- System status -->
+        <div class="status-strip">
+          <div class="status-row">
+            <span class="status-label">Broker</span>
+            <span class="status-value">
+              <span class="status-dot dot-disconnected"></span> Disconnected
+            </span>
+          </div>
+          <div class="status-row">
+            <span class="status-label">Engine</span>
+            <span class="status-value">
+              <span class="status-dot dot-ready"></span> Ready
+            </span>
+          </div>
+          <div class="status-row">
+            <span class="status-label">Market</span>
+            <span class="status-value">
+              <span class="status-dot dot-ready"></span> {{ market_status or "Pre-Open" }}
+            </span>
+          </div>
+        </div>
+
+        <!-- Connect with Zerodha -->
+        <a href="{{ login_url }}" class="btn-kite" id="btn-connect" onclick="this.classList.add('loading')">
+          <span class="kite-logo">🪁</span>
+          <span class="btn-text">Connect with Zerodha Kite</span>
+          <div class="spinner-kite"></div>
+        </a>
+
+        <div class="divider">or</div>
+
+        <!-- Paper Trading Mode -->
+        <a href="{{ url_for('dashboard') }}" class="btn-paper" id="btn-paper">
+          <i class="bi bi-file-earmark-text"></i> Continue in Paper Mode
+        </a>
+
+        <div class="login-footer">
+          Secured via Zerodha OAuth 2.0 · We never store your password<br>
+          <a href="https://kite.zerodha.com" target="_blank">kite.zerodha.com</a>
+        </div>
+      {% endif %}
+
+    </div>
+  </div>
+
+  <script>
+    // If connected, auto-redirect after 3s
+    {% if connected %}
+    setTimeout(() => {
+      document.getElementById('btn-go-dashboard').click();
+    }, 3000);
+    {% endif %}
+  </script>
+</body>
+</html>

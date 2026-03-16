@@ -46,3 +46,9 @@ celerybeat.pid
 # Misc
 nul
 C:
+
+# Redis dump
+dump.rdb
+
+# Compiled extensions
+*.so
