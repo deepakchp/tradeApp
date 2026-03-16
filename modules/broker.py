@@ -13,7 +13,7 @@ from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
 import structlog
-from kiteconnect import KiteConnect
+from kiteconnect import KiteConnect, KiteTicker
 
 from config import KITE_API_KEY, KITE_API_SECRET
 
@@ -55,6 +55,12 @@ class KiteBroker:
         """Manually set an access token (e.g. restored from storage)."""
         self._access_token = access_token
         self.kite.set_access_token(access_token)
+
+    def get_ticker(self) -> Optional[KiteTicker]:
+        """Return a KiteTicker instance for WebSocket streaming if an access token exists."""
+        if not self._access_token:
+            return None
+        return KiteTicker(api_key=self.api_key, access_token=self._access_token)
 
     @property
     def is_connected(self) -> bool:

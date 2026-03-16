@@ -207,11 +207,50 @@ const VRP = {
     }
   },
 
+  // ── Update Process Status (Sidebar) ──────────────────────────
+  async updateProcessStatus() {
+    const res = await VRP.fetchJSON('/api/v1/system/status');
+    if (!res.ok) return;
+    const sys = res.data;
+
+    const setStatusBlock = (id, isOk, title) => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.innerHTML = `<i class="bi bi-circle-fill text-${isOk ? 'success' : 'danger'}" style="font-size: 0.5rem;" title="${title}"></i>`;
+      }
+    };
+
+    setStatusBlock('nav-status-broker', sys.broker.status === 'connected', sys.broker.status === 'connected' ? 'Connected' : 'Disconnected');
+    setStatusBlock('nav-status-pg', sys.postgresql.status === 'connected', sys.postgresql.status === 'connected' ? 'Connected' : 'Disconnected');
+    setStatusBlock('nav-status-redis', sys.redis.status === 'connected', sys.redis.status === 'connected' ? 'Connected' : 'Disconnected');
+    setStatusBlock('nav-status-engine', sys.streamer.status === 'running', sys.streamer.status === 'running' ? 'Running' : 'Stopped');
+    setStatusBlock('nav-status-scanner', sys.scanner.status === 'running', sys.scanner.status === 'running' ? 'Running' : 'Stopped');
+    setStatusBlock('nav-status-celery', sys.celery.status === 'running', sys.celery.status === 'running' ? 'Running' : 'Stopped');
+    
+    // Bind Sidebar Logout Button if it exists and isn't bound yet
+    const logoutBtn = document.getElementById('btn-sidebar-logout');
+    if (logoutBtn && !logoutBtn.dataset.bound) {
+      logoutBtn.dataset.bound = 'true';
+      logoutBtn.addEventListener('click', () => {
+        VRP.confirmAction('Disconnect Broker', 'Are you sure you want to disconnect from Kite? You will be logged out.', async function() {
+          const res = await VRP.fetchJSON('/api/v1/broker/disconnect', { method: 'POST' });
+          if (res.ok) {
+            window.location.href = '/login';
+          } else {
+            VRP.showToast('Failed to disconnect', 'error');
+          }
+        });
+      });
+    }
+  },
+
   // ── Init ─────────────────────────────────────────────────────
   init() {
     VRP.initSidebar();
     VRP.updateStatusBadges();
+    VRP.updateProcessStatus();
     setInterval(VRP.updateStatusBadges, 30000);
+    setInterval(VRP.updateProcessStatus, 15000);
   },
 };
 

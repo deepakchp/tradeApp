@@ -950,7 +950,12 @@ class AutoScanner:
                             # Skip if there's already a pending signal for this symbol
                             if any(s.symbol == symbol for s in pending):
                                 continue
-                            self._scan_symbol(symbol)
+                            signal = self._scan_symbol(symbol)
+                            
+                            # Auto-execute the signal if one was successfully generated
+                            if signal:
+                                log.info("scanner.auto_executing_signal", signal_id=signal.signal_id, symbol=symbol)
+                                self.execute_signal(signal.signal_id)
                     else:
                         log.debug("scanner.max_pending_reached",
                                   count=len(pending))

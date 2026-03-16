@@ -30,6 +30,7 @@ from flask_cors import CORS
 from config import (
     FLASK_SECRET, FLASK_HOST, FLASK_PORT, DEBUG,
     LOG_LEVEL, LOG_FILE, RISK_CFG, BROKER, VRP_GATE,
+    UNDERLYING_INSTRUMENTS, SYMBOL_EXCHANGE,
     GREEKS_CFG, LIFECYCLE_CFG, SLIPPAGE_CFG, WHIPSAW_CFG, SKEW_CFG,
     PAPER_TRADE, REDIS_URL, DATABASE_URL,
     MTM_MONITOR_INTERVAL_SEC, DELTA_MONITOR_INTERVAL_SEC, CELERY_TIMEZONE,
@@ -49,6 +50,8 @@ from modules.tasks import celery_app, order_log
 from modules.broker import KiteBroker
 from modules.scanner import AutoScanner, PendingSignal
 from modules.backtester import BacktestEngine, BacktestBatchEngine, BacktestConfig
+from modules.data_stream import MarketDataStreamer
+import redis
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -117,9 +120,10 @@ class SystemState:
     data_engine:     Optional[DataEngine]  = None
     broker:          Optional[KiteBroker]  = None
     scanner:         Optional[AutoScanner] = None
-
+    streamer:        Optional[MarketDataStreamer] = None
 
 _system_state: Optional[SystemState] = None
+_redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 _market_data:  Dict[str, Any] = {
     "spot":       {},
     "iv":         {},
@@ -129,21 +133,70 @@ _market_data:  Dict[str, Any] = {
     "india_vix":  15.0,
 }
 _backtest_cache: Optional[Dict[str, Any]] = None
+_last_market_data: Dict[str, Any] = _market_data.copy()
 
 
 def get_system_state() -> SystemState:
     global _system_state
     if _system_state is None:
         _system_state = SystemState()
+
+        # ── PostgreSQL: Initialize tables & rebuild positions from DB ──
+        try:
+            from modules.db import init_db, load_all_positions
+            init_db()
+            recovered = load_all_positions()
+            if recovered:
+                _system_state.positions.update(recovered)
+                log.info("startup.positions_recovered_from_db", count=len(recovered))
+        except Exception as e:
+            log.warning("startup.db_recovery_failed", error=str(e))
+
         # Initialize Kite broker if credentials are configured
         if KITE_API_KEY:
             _system_state.broker = KiteBroker()
             log.info("broker.initialized", api_key=KITE_API_KEY[:4] + "****")
+            
+            # If access token was provided in .env, bridge the streamer immediately
+            if _system_state.broker.is_connected:
+                ticker = _system_state.broker.get_ticker()
+                if ticker:
+                    from modules.data_stream import MarketDataStreamer
+                    _system_state.streamer = MarketDataStreamer(ticker)
+                    _system_state.streamer.start()
+                    log.info("streamer.auto_started_from_env")
     return _system_state
 
 
 def get_market_data() -> Dict[str, Any]:
-    return _market_data
+    global _last_market_data
+    try:
+        # Pull real-time data from Redis replica
+        ltp_data = _redis_client.hgetall("vrp:market_data:ltp")
+        vol_data = _redis_client.hgetall("vrp:market_data:vol")
+        
+        market = {
+            "spot": {},
+            "iv": {}, # Still need IV surface logic here or separate from _last_market_data
+            "spot_5m": _last_market_data.get("spot_5m", {}),
+            "volume": {},
+            "avg_volume": _last_market_data.get("avg_volume", {}),
+            "india_vix": _last_market_data.get("india_vix", 15.0),
+        }
+        
+        # We need token-to-symbol mapping, in a real system we'd look this up
+        # For now, we will assume the caller pulls the Ltp dict to look up by token if needed
+        # Or we can just return the raw token -> value mapping
+        market["raw_ltp"] = {int(k): float(v) for k, v in ltp_data.items()}
+        market["raw_vol"] = {int(k): float(v) for k, v in vol_data.items()}
+        
+        # Merge over any manual fetches done via the old /api/v1/market/live
+        market["spot"].update(_last_market_data.get("spot", {}))
+        
+        return market
+    except Exception as e:
+        log.error("market_data.redis_pull_failed", error=str(e))
+        return _last_market_data
 
 
 def get_execution_engine() -> SystemState:
@@ -200,6 +253,75 @@ def create_app() -> Flask:
             "aum_inr":             state.aum,
             "broker_connected":    state.broker.is_connected if state.broker else False,
             "timestamp":           datetime.utcnow().isoformat(),
+        })
+
+    # ─────────────────────────────────────────────────────────────
+    # ENDPOINT: System Process Status
+    # ─────────────────────────────────────────────────────────────
+    @app.route("/api/v1/system/status", methods=["GET"])
+    def system_status():
+        """Return operational status of all system components."""
+        state = get_system_state()
+
+        # Redis status
+        redis_ok = False
+        try:
+            redis_ok = _redis_client.ping()
+        except Exception:
+            pass
+
+        # PostgreSQL status
+        pg_ok = False
+        try:
+            from modules.db import SessionLocal
+            sess = SessionLocal()
+            sess.execute(__import__("sqlalchemy").text("SELECT 1"))
+            sess.close()
+            pg_ok = True
+        except Exception:
+            pass
+
+        # Celery status
+        celery_ok = False
+        try:
+            from modules.tasks import celery_app as _celery
+            insp = _celery.control.inspect(timeout=1.0)
+            active = insp.active()
+            celery_ok = active is not None and len(active) > 0
+        except Exception:
+            pass
+
+        # Broker
+        broker_connected = state.broker.is_connected if state.broker else False
+        broker_user = None
+        if broker_connected and state.broker.user_profile:
+            broker_user = {
+                "user_id": state.broker.user_profile.get("user_id"),
+                "user_name": state.broker.user_profile.get("user_name"),
+            }
+
+        return jsonify({
+            "broker": {
+                "status": "connected" if broker_connected else "disconnected",
+                "user": broker_user,
+            },
+            "scanner": {
+                "status": "running" if (state.scanner and state.scanner.is_running) else "stopped",
+            },
+            "streamer": {
+                "status": "running" if (state.streamer and state.streamer.is_running) else "stopped",
+            },
+            "redis": {
+                "status": "connected" if redis_ok else "disconnected",
+            },
+            "postgresql": {
+                "status": "connected" if pg_ok else "disconnected",
+            },
+            "celery": {
+                "status": "running" if celery_ok else "stopped",
+            },
+            "paper_trade": PAPER_TRADE,
+            "kill_switch": state.kill_switch_active,
         })
 
     # ─────────────────────────────────────────────────────────────
@@ -335,6 +457,19 @@ def create_app() -> Flask:
         position.sector = incoming_sector
         state.positions[position_id] = position
 
+        # ── Persist to PostgreSQL ──────────────────────────────────
+        try:
+            from modules.db import persist_position, persist_order_event
+            persist_position(position)
+            persist_order_event(
+                position_id=position_id,
+                event_type="position.opened",
+                action=strategy_type.value,
+                details={"short_delta": short_delta, "wing_delta": wing_delta},
+            )
+        except Exception as e:
+            log.error("db.persist_on_entry_failed", error=str(e))
+
         order_log.log_event(
             "position.opened",
             position_id   = position_id,
@@ -346,6 +481,32 @@ def create_app() -> Flask:
             iv_rv_spread  = round(surface.iv_rv_spread, 2),
             ivp           = round(surface.iv_percentile, 1),
         )
+
+        # Sub to streamer
+        if state.streamer and state.broker:
+            try:
+                # Need to resolve Kite instrument token for the symbol
+                # For an option leg this is more complex, but for the underlying spot:
+                underlying = UNDERLYING_INSTRUMENTS.get(data["symbol"])
+                if underlying:
+                    # e.g., "NSE:NIFTY BANK"
+                    parts = underlying.split(":")
+                    if len(parts) == 2:
+                        inst_token = state.broker.get_instrument_token(
+                            exchange=parts[0],
+                            tradingsymbol=parts[1]
+                        )
+                    else:
+                        inst_token = state.broker.get_instrument_token(
+                            exchange=SYMBOL_EXCHANGE.get(data["symbol"], "NFO"),
+                            tradingsymbol=data["symbol"]
+                        )
+                    
+                    if inst_token:
+                        state.streamer.subscribe([inst_token])
+                        log.info("streamer.subscribed_new_position", symbol=data["symbol"], token=inst_token)
+            except Exception as e:
+                log.error("streamer.subscribe_failed", symbol=data["symbol"], error=str(e))
 
         log.info("trade.entered",
                  position_id=position_id, strategy=strategy_type.value)
@@ -496,6 +657,41 @@ def create_app() -> Flask:
             "reason":      decision.reason,
             "queued":      decision.action.value != "none",
         })
+
+    # ─────────────────────────────────────────────────────────────
+    # ENDPOINT: Internal Native Execution (Bypass Celery)
+    # ─────────────────────────────────────────────────────────────
+    @app.route("/api/v1/internal/execute_adjustment", methods=["POST"])
+    def internal_execute_adjustment():
+        """
+        Executes adjustment synchronously without Celery. 
+        Intended to be called asynchronously via aiohttp by async_engine.py.
+        """
+        data = request.get_json(silent=True) or {}
+        from modules.tasks import _do_adjustment
+        
+        result = _do_adjustment(
+            position_id  = data.get("position_id"),
+            action       = data.get("action"),
+            leg_symbol   = data.get("leg_symbol"),
+            target_delta = data.get("target_delta"),
+            details      = data.get("details"),
+        )
+        return jsonify(result)
+        
+    @app.route("/api/v1/internal/execute_position_exit", methods=["POST"])
+    def internal_execute_position_exit():
+        """
+        Executes position exit synchronously without Celery.
+        """
+        data = request.get_json(silent=True) or {}
+        from modules.tasks import _do_position_exit
+        
+        result = _do_position_exit(
+            position_id=data.get("position_id"),
+            reason=data.get("reason"),
+        )
+        return jsonify(result)
 
     # ─────────────────────────────────────────────────────────────
     # ENDPOINT: KILL SWITCH  🔴
@@ -787,7 +983,16 @@ def create_app() -> Flask:
                 state.scanner = AutoScanner(broker=state.broker, system_state=state)
             state.scanner.start()
 
-            return redirect(url_for("dashboard"))
+            # Auto-start the WebSocket streamer
+            if state.streamer is None:
+                ticker = state.broker.get_ticker()
+                if ticker:
+                    from modules.data_stream import MarketDataStreamer
+                    state.streamer = MarketDataStreamer(ticker)
+            if state.streamer and not state.streamer.is_running:
+                state.streamer.start()
+
+            return redirect(url_for("login_page"))
         except Exception as exc:
             log.error("broker.login_failed", error=str(exc))
             return jsonify({"error": "Kite login failed", "detail": str(exc)}), 401
@@ -829,6 +1034,11 @@ def create_app() -> Flask:
         if state.scanner and state.scanner.is_running:
             state.scanner.stop()
             log.info("broker.disconnect.scanner_stopped")
+
+        # Stop streamer if running
+        if state.streamer and state.streamer.is_running:
+            state.streamer.stop()
+            log.info("broker.disconnect.streamer_stopped")
 
         # Clear the access token
         state.broker.kite.set_access_token(None)
@@ -1092,9 +1302,39 @@ def create_app() -> Flask:
     # ─────────────────────────────────────────────────────────────
     # UI ROUTES (serve Jinja2 templates)
     # ─────────────────────────────────────────────────────────────
+
+    # ── Login Gate: redirect unauthenticated users to /login ────
+    @app.before_request
+    def require_broker_login():
+        """Gate all page routes behind broker auth. APIs are exempt."""
+        # Exempt paths: login page, static, APIs, broker auth endpoints
+        exempt_prefixes = ("/login", "/static", "/api/", "/favicon")
+        if any(request.path.startswith(p) for p in exempt_prefixes):
+            return None
+        state = get_system_state()
+        if not state.broker or not state.broker.is_connected:
+            return redirect(url_for("login_page"))
+        return None
+
     @app.route("/")
     def index():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("login_page"))
+
+    @app.route("/login")
+    def login_page():
+        """Zerodha Kite login screen."""
+        state = get_system_state()
+        connected = state.broker and state.broker.is_connected
+        ctx = {
+            "connected": connected,
+            "login_url": state.broker.get_login_url() if state.broker else "#",
+            "error": request.args.get("error"),
+            "market_status": "Pre-Open",
+        }
+        if connected and state.broker.user_profile:
+            ctx["user_name"] = state.broker.user_profile.get("user_name", "Trader")
+            ctx["user_id"] = state.broker.user_profile.get("user_id", "")
+        return render_template("login.html", **ctx)
 
     @app.route("/dashboard")
     def dashboard():

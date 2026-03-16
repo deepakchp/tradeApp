@@ -172,7 +172,7 @@ class Position:
 
 class BlackScholesEngine:
     """
-    Full BSM Greeks calculator using scipy.stats.norm.
+    Fast BSM Greeks calculator using Cython.
     Supports continuous dividend yield for index options (Merton model).
     Risk-free rate defaults to RBI repo rate proxy (~6.0% in 2026).
     """
@@ -181,70 +181,20 @@ class BlackScholesEngine:
         self.r = risk_free_rate if risk_free_rate is not None else RISK_FREE_RATE
         self.q = dividend_yield  # Continuous dividend yield (NIFTY ~1.3%)
 
-    def _d1_d2(
-        self,
-        S: float,   # Spot
-        K: float,   # Strike
-        T: float,   # Time to expiry in years
-        sigma: float,  # IV as decimal (0.20 = 20%)
-    ) -> Tuple[float, float]:
-        if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
-            return 0.0, 0.0
-        d1 = (math.log(S / K) + (self.r - self.q + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
-        d2 = d1 - sigma * math.sqrt(T)
-        return d1, d2
-
     def price(self, S, K, T, sigma, option_type: OptionType) -> float:
-        d1, d2 = self._d1_d2(S, K, T, sigma)
-        if T <= 0:
-            if option_type == OptionType.CALL:
-                return max(S - K, 0.0)
-            return max(K - S, 0.0)
-        if option_type == OptionType.CALL:
-            return S * math.exp(-self.q * T) * norm.cdf(d1) - K * math.exp(-self.r * T) * norm.cdf(d2)
-        return K * math.exp(-self.r * T) * norm.cdf(-d2) - S * math.exp(-self.q * T) * norm.cdf(-d1)
+        from modules import fast_greeks
+        # Using fast_greeks
+        return fast_greeks.price(S, K, T, sigma, option_type.value, self.r, self.q)
 
     def greeks(self, S, K, T, sigma, option_type: OptionType) -> Greeks:
-        d1, d2 = self._d1_d2(S, K, T, sigma)
-        if T <= 0:
-            return Greeks()
-
-        sqrt_T = math.sqrt(T)
-        pdf_d1 = norm.pdf(d1)
-        exp_qT = math.exp(-self.q * T)
-
-        # Delta (adjusted for continuous dividend yield)
-        if option_type == OptionType.CALL:
-            delta = exp_qT * norm.cdf(d1)
-        else:
-            delta = exp_qT * (norm.cdf(d1) - 1.0)     # Negative for puts
-
-        # Gamma (same for calls and puts)
-        gamma = pdf_d1 / (S * sigma * sqrt_T)
-
-        # Theta (per calendar day, adjusted for dividend yield)
-        theta_common = -(S * exp_qT * pdf_d1 * sigma) / (2 * sqrt_T)
-        if option_type == OptionType.CALL:
-            theta = (theta_common
-                     + self.q * S * exp_qT * norm.cdf(d1)
-                     - self.r * K * math.exp(-self.r * T) * norm.cdf(d2)) / 365
-        else:
-            theta = (theta_common
-                     - self.q * S * exp_qT * norm.cdf(-d1)
-                     + self.r * K * math.exp(-self.r * T) * norm.cdf(-d2)) / 365
-
-        # Vega (per 1% move in vol — divide by 100 since sigma is decimal)
-        vega = S * exp_qT * pdf_d1 * sqrt_T / 100.0
-
-        # Vanna: dΔ/dσ  (used to detect Vanna adjustment signal)
-        vanna = -pdf_d1 * d2 / sigma if sigma > 0 else 0.0
-
+        from modules import fast_greeks
+        res_dict = fast_greeks.greeks(S, K, T, sigma, option_type.value, self.r, self.q)
         return Greeks(
-            delta=round(delta,  4),
-            theta=round(theta,  4),
-            vega =round(vega,   4),
-            gamma=round(gamma,  6),
-            vanna=round(vanna,  4),
+            delta=res_dict["delta"],
+            gamma=res_dict["gamma"],
+            theta=res_dict["theta"],
+            vega=res_dict["vega"],
+            vanna=res_dict["vanna"]
         )
 
     def implied_vol(
@@ -255,21 +205,9 @@ class BlackScholesEngine:
         tol: float = 1e-6,
         max_iter: int = 200,
     ) -> float:
-        """Newton-Raphson IV solver."""
-        if T <= 0 or market_price <= 0:
-            return 0.0
-        sigma = 0.25   # Initial guess
-        for _ in range(max_iter):
-            price = self.price(S, K, T, sigma, option_type)
-            vega  = self.greeks(S, K, T, sigma, option_type).vega * 100   # Back to decimal
-            diff  = price - market_price
-            if abs(diff) < tol:
-                break
-            if vega < 1e-10:
-                break
-            sigma = sigma - diff / vega
-            sigma = max(0.001, min(sigma, 10.0))    # Clamp to sane range
-        return round(sigma, 6)
+        """Newton-Raphson fast IV solver via Cython."""
+        from modules import fast_greeks
+        return fast_greeks.implied_vol(S, K, T, market_price, option_type.value, self.r, self.q, tol, max_iter)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -1031,15 +969,21 @@ class SlippageController:
         theoretical_mid: float,
         side: str,          # "buy" | "sell"
         chase_step: int,    # 0 = initial, 1-4 = chase steps
+        vwap_anchor: Optional[float] = None,  # VWAP from orderbook depth
     ) -> float:
         """
         For buys:  walk UP  (pay more to fill)
         For sells: walk DOWN (accept less to fill)
+        
+        When vwap_anchor is provided (from tick-level orderbook depth),
+        use it as the price anchor instead of theoretical_mid for more
+        accurate execution pricing.
         """
+        anchor = vwap_anchor if vwap_anchor and vwap_anchor > 0 else theoretical_mid
         offset = self.cfg.chase_step_pct * chase_step
         if side == "buy":
-            return round(theoretical_mid * (1.0 + offset), 2)
-        return round(theoretical_mid * (1.0 - offset), 2)
+            return round(anchor * (1.0 + offset), 2)
+        return round(anchor * (1.0 - offset), 2)
 
     def is_within_budget(
         self,

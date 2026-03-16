@@ -52,17 +52,8 @@ def make_celery() -> Celery:
         task_track_started     = True,
         task_acks_late         = True,          # Ack only after completion
         worker_prefetch_multiplier = 1,          # One task at a time per worker
-        # Beat schedule for periodic tasks
-        beat_schedule = {
-            "mtm-monitor": {
-                "task":     "modules.tasks.run_mtm_monitor",
-                "schedule": MTM_MONITOR_INTERVAL_SEC,
-            },
-            "delta-monitor": {
-                "task":     "modules.tasks.run_delta_monitor",
-                "schedule": DELTA_MONITOR_INTERVAL_SEC,
-            },
-        },
+        # Beat schedule previously ran mtm-monitor and delta-monitor here.
+        # This has been replaced by the real-time Asyncio event loop (async_engine.py).
     )
     return app
 
@@ -201,11 +192,23 @@ def run_delta_monitor(self) -> Dict[str, Any]:
                 continue
 
             results["checked"] += 1
-            spot     = market.get("spot", {}).get(pos.symbol, 0)
+            
+            # Use raw_ltp and raw_vol when available (real-time). Fallback to old keys for tests
+            symbol_token = state.broker.get_instrument_token(pos.symbol) if state.broker else None
+            
+            if symbol_token and "raw_ltp" in market and symbol_token in market["raw_ltp"]:
+                spot = market["raw_ltp"][symbol_token]
+            else:
+                spot = market.get("spot", {}).get(pos.symbol, 0)
+                
+            if symbol_token and "raw_vol" in market and symbol_token in market["raw_vol"]:
+                vol_now = market["raw_vol"][symbol_token]
+            else:
+                vol_now = market.get("volume", {}).get(pos.symbol, 0)
+                
             curr_iv  = market.get("iv", {}).get(pos.symbol, pos.entry_iv)
             vix      = market.get("india_vix", 15.0)
             spot_5m  = market.get("spot_5m", {}).get(pos.symbol, spot)
-            vol_now  = market.get("volume", {}).get(pos.symbol, 0)
             avg_vol  = market.get("avg_volume", {}).get(pos.symbol, 1)
 
             decision = state.hedging_engine.evaluate_position(
@@ -245,147 +248,77 @@ def run_delta_monitor(self) -> Dict[str, Any]:
         raise self.retry(exc=exc)
 
 
-@celery_app.task(
-    name="modules.tasks.execute_position_exit",
-    bind=True,
-    max_retries=5,
-    default_retry_delay=2,
-)
-def execute_position_exit(self, position_id: str, reason: str) -> Dict[str, Any]:
+# ─────────────────────────────────────────────────────────────────
+# STANDALONE EXECUTION FUNCTIONS (Upgrade #4)
+# These can be called directly by internal Flask endpoints OR by
+# Celery tasks. No dependency on Celery's `self` for retry logic.
+# ─────────────────────────────────────────────────────────────────
+
+def _do_position_exit(position_id: str, reason: str) -> Dict[str, Any]:
     """
-    Execute a full position exit (all legs).
+    Core position exit logic — standalone, no Celery dependency.
     Uses limit-chase slippage controller per leg.
     """
-    try:
-        from app import get_system_state, get_execution_engine
+    from app import get_system_state, get_execution_engine
 
-        state   = get_system_state()
-        exec_eng = get_execution_engine()
+    state   = get_system_state()
+    exec_eng = get_execution_engine()
 
-        pos = state.positions.get(position_id)
-        if not pos:
-            return {"status": "position_not_found", "position_id": position_id}
+    pos = state.positions.get(position_id)
+    if not pos:
+        return {"status": "position_not_found", "position_id": position_id}
 
-        if pos.state.value == "closed":
-            return {"status": "already_closed", "position_id": position_id}
+    if pos.state.value == "closed":
+        return {"status": "already_closed", "position_id": position_id}
 
-        pos.state = pos.state.__class__.CLOSING
-        fills = []
+    pos.state = pos.state.__class__.CLOSING
+    fills = []
 
-        for leg in pos.legs:
-            side = "sell" if leg.is_long else "buy"   # Close = reverse
-            theoretical_mid = leg.current_price
+    for leg in pos.legs:
+        side = "sell" if leg.is_long else "buy"   # Close = reverse
+        theoretical_mid = leg.current_price
 
-            if not PAPER_TRADE and state.broker and state.broker.is_connected:
-                # ── LIVE EXECUTION: Place real orders via Kite ──────
-                tx_type = "SELL" if leg.is_long else "BUY"
-                quantity = leg.lots * leg.lot_size
+        if not PAPER_TRADE and state.broker and state.broker.is_connected:
+            # ── LIVE EXECUTION: Place real orders via Kite ──────
+            tx_type = "SELL" if leg.is_long else "BUY"
+            quantity = leg.lots * leg.lot_size
 
-                for step in range(SLIPPAGE_CFG.max_chase_steps + 1):
-                    limit_price = exec_eng.slippage.compute_limit_price(
-                        theoretical_mid, side, step
+            for step in range(SLIPPAGE_CFG.max_chase_steps + 1):
+                limit_price = exec_eng.slippage.compute_limit_price(
+                    theoretical_mid, side, step
+                )
+                try:
+                    order_id = state.broker.place_order(
+                        tradingsymbol=leg.symbol,
+                        exchange=leg.exchange,
+                        transaction_type=tx_type,
+                        quantity=quantity,
+                        order_type="LIMIT",
+                        price=limit_price,
+                        product="NRML",
                     )
-                    try:
-                        order_id = state.broker.place_order(
-                            tradingsymbol=leg.symbol,
-                            exchange=leg.exchange,
-                            transaction_type=tx_type,
-                            quantity=quantity,
-                            order_type="LIMIT",
-                            price=limit_price,
-                            product="NRML",
-                        )
-                        log.info("execute_exit.order_placed",
-                                 order_id=order_id, leg=leg.symbol,
-                                 price=limit_price, step=step)
+                    log.info("execute_exit.order_placed",
+                             order_id=order_id, leg=leg.symbol,
+                             price=limit_price, step=step)
 
-                        # Wait for fill
-                        if step < SLIPPAGE_CFG.max_chase_steps:
-                            time.sleep(SLIPPAGE_CFG.chase_interval_sec)
+                    # Wait for fill
+                    if step < SLIPPAGE_CFG.max_chase_steps:
+                        time.sleep(SLIPPAGE_CFG.chase_interval_sec)
 
-                        # Check fill status
-                        order_history = state.broker.get_order_history(order_id)
-                        latest = order_history[-1] if order_history else {}
-                        status = latest.get("status", "")
+                    # Check fill status
+                    order_history = state.broker.get_order_history(order_id)
+                    latest = order_history[-1] if order_history else {}
+                    status = latest.get("status", "")
 
-                        if status == "COMPLETE":
-                            fill_price = latest.get("average_price", limit_price)
-                            fills.append({
-                                "leg": leg.symbol,
-                                "side": side,
-                                "fill_price": fill_price,
-                                "order_id": order_id,
-                                "chase_steps": step,
-                                "mode": "live",
-                            })
-                            order_log.log_event(
-                                "order.filled",
-                                position_id=position_id,
-                                leg_symbol=leg.symbol,
-                                side=side,
-                                fill_price=fill_price,
-                                order_id=order_id,
-                                chase_steps=step,
-                                reason=reason,
-                                mode="live",
-                            )
-                            break
-
-                        # Partial fill handling: some quantity filled but order not complete
-                        filled_qty = latest.get("filled_quantity", 0)
-                        pending_qty = latest.get("pending_quantity", quantity)
-                        if filled_qty > 0 and status != "COMPLETE":
-                            order_log.log_event(
-                                "order.partial_fill",
-                                position_id=position_id,
-                                leg_symbol=leg.symbol,
-                                order_id=order_id,
-                                filled_qty=filled_qty,
-                                pending_qty=pending_qty,
-                                total_qty=quantity,
-                            )
-                            log.warning("execute_exit.partial_fill",
-                                        order_id=order_id, leg=leg.symbol,
-                                        filled=filled_qty, pending=pending_qty)
-
-                        # Not filled — cancel and chase at worse price
-                        if step < SLIPPAGE_CFG.max_chase_steps:
-                            try:
-                                state.broker.cancel_order(order_id)
-                            except Exception:
-                                pass  # May already be filled
-
-                    except Exception as e:
-                        log.error("execute_exit.order_failed",
-                                  leg=leg.symbol, step=step, error=str(e))
-                        break
-                else:
-                    order_log.log_event(
-                        "slippage.budget_exceeded",
-                        position_id=position_id,
-                        leg_symbol=leg.symbol,
-                        theoretical=theoretical_mid,
-                        mode="live",
-                    )
-                    log.error("execute_exit.slippage_abort",
-                              leg=leg.symbol, position_id=position_id)
-
-            else:
-                # ── PAPER TRADE: Simulated fills ───────────────────
-                for step in range(SLIPPAGE_CFG.max_chase_steps + 1):
-                    limit_price = exec_eng.slippage.compute_limit_price(
-                        theoretical_mid, side, step
-                    )
-                    fill_price = limit_price
-                    time.sleep(SLIPPAGE_CFG.chase_interval_sec if step > 0 else 0)
-
-                    if exec_eng.slippage.is_within_budget(theoretical_mid, fill_price, side):
+                    if status == "COMPLETE":
+                        fill_price = latest.get("average_price", limit_price)
                         fills.append({
                             "leg": leg.symbol,
                             "side": side,
                             "fill_price": fill_price,
+                            "order_id": order_id,
                             "chase_steps": step,
-                            "mode": "paper",
+                            "mode": "live",
                         })
                         order_log.log_event(
                             "order.filled",
@@ -393,35 +326,230 @@ def execute_position_exit(self, position_id: str, reason: str) -> Dict[str, Any]
                             leg_symbol=leg.symbol,
                             side=side,
                             fill_price=fill_price,
+                            order_id=order_id,
                             chase_steps=step,
                             reason=reason,
-                            mode="paper",
+                            mode="live",
                         )
                         break
-                else:
+
+                    # Partial fill handling
+                    filled_qty = latest.get("filled_quantity", 0)
+                    pending_qty = latest.get("pending_quantity", quantity)
+                    if filled_qty > 0 and status != "COMPLETE":
+                        order_log.log_event(
+                            "order.partial_fill",
+                            position_id=position_id,
+                            leg_symbol=leg.symbol,
+                            order_id=order_id,
+                            filled_qty=filled_qty,
+                            pending_qty=pending_qty,
+                            total_qty=quantity,
+                        )
+                        log.warning("execute_exit.partial_fill",
+                                    order_id=order_id, leg=leg.symbol,
+                                    filled=filled_qty, pending=pending_qty)
+
+                    # Not filled — cancel and chase at worse price
+                    if step < SLIPPAGE_CFG.max_chase_steps:
+                        try:
+                            state.broker.cancel_order(order_id)
+                        except Exception:
+                            pass  # May already be filled
+
+                except Exception as e:
+                    log.error("execute_exit.order_failed",
+                              leg=leg.symbol, step=step, error=str(e))
+                    break
+            else:
+                order_log.log_event(
+                    "slippage.budget_exceeded",
+                    position_id=position_id,
+                    leg_symbol=leg.symbol,
+                    theoretical=theoretical_mid,
+                    mode="live",
+                )
+                log.error("execute_exit.slippage_abort",
+                          leg=leg.symbol, position_id=position_id)
+
+        else:
+            # ── PAPER TRADE: Simulated fills ───────────────────
+            for step in range(SLIPPAGE_CFG.max_chase_steps + 1):
+                limit_price = exec_eng.slippage.compute_limit_price(
+                    theoretical_mid, side, step
+                )
+                fill_price = limit_price
+                time.sleep(SLIPPAGE_CFG.chase_interval_sec if step > 0 else 0)
+
+                if exec_eng.slippage.is_within_budget(theoretical_mid, fill_price, side):
+                    fills.append({
+                        "leg": leg.symbol,
+                        "side": side,
+                        "fill_price": fill_price,
+                        "chase_steps": step,
+                        "mode": "paper",
+                    })
                     order_log.log_event(
-                        "slippage.budget_exceeded",
+                        "order.filled",
                         position_id=position_id,
                         leg_symbol=leg.symbol,
-                        theoretical=theoretical_mid,
+                        side=side,
+                        fill_price=fill_price,
+                        chase_steps=step,
+                        reason=reason,
                         mode="paper",
                     )
-                    log.error("execute_exit.slippage_abort",
-                              leg=leg.symbol, position_id=position_id)
+                    break
+            else:
+                order_log.log_event(
+                    "slippage.budget_exceeded",
+                    position_id=position_id,
+                    leg_symbol=leg.symbol,
+                    theoretical=theoretical_mid,
+                    mode="paper",
+                )
+                log.error("execute_exit.slippage_abort",
+                          leg=leg.symbol, position_id=position_id)
 
-        pos.state = pos.state.__class__.CLOSED
-        order_log.log_event(
-            "position.closed",
-            position_id = position_id,
-            reason      = reason,
-            legs_closed = len(fills),
-            net_pnl     = round(pos.net_pnl, 2),
+    pos.state = pos.state.__class__.CLOSED
+    order_log.log_event(
+        "position.closed",
+        position_id = position_id,
+        reason      = reason,
+        legs_closed = len(fills),
+        net_pnl     = round(pos.net_pnl, 2),
+    )
+
+    # ── Persist to PostgreSQL ──────────────────────────────────
+    try:
+        from modules.db import persist_position, persist_order_event
+        persist_position(pos)
+        persist_order_event(
+            position_id=position_id,
+            event_type="position.closed",
+            action=reason,
+            details={"fills": fills, "net_pnl": round(pos.net_pnl, 2)},
         )
-        return {"status": "closed", "position_id": position_id, "fills": fills}
+    except Exception:
+        pass
 
+    return {"status": "closed", "position_id": position_id, "fills": fills}
+
+
+@celery_app.task(
+    name="modules.tasks.execute_position_exit",
+    bind=True,
+    max_retries=5,
+    default_retry_delay=2,
+)
+def execute_position_exit(self, position_id: str, reason: str) -> Dict[str, Any]:
+    """Celery wrapper around _do_position_exit."""
+    try:
+        return _do_position_exit(position_id, reason)
     except Exception as exc:
         log.error("execute_exit.failed", error=str(exc), position_id=position_id)
         raise self.retry(exc=exc)
+
+
+
+def _do_adjustment(
+    position_id:  str,
+    action:       str,
+    leg_symbol:   Optional[str] = None,
+    target_delta: Optional[float] = None,
+    details:      Optional[Dict] = None,
+) -> Dict[str, Any]:
+    """
+    Core adjustment logic — standalone, no Celery dependency.
+    Sets cooldown after execution.
+    """
+    from app import get_system_state, get_execution_engine
+
+    state    = get_system_state()
+    exec_eng = get_execution_engine()
+    pos      = state.positions.get(position_id)
+
+    if not pos:
+        return {"status": "position_not_found"}
+
+    result = {"status": "executed", "action": action, "position_id": position_id}
+
+    if action == "close_all":
+        execute_position_exit.delay(position_id, reason="impulsive_move_close_all")
+
+    elif action == "roll_challenged_leg":
+        log.info("adjustment.roll_challenged",
+                 position_id=position_id, leg=leg_symbol,
+                 target_delta=target_delta)
+        order_log.log_event(
+            "position.rolled",
+            position_id  = position_id,
+            leg_symbol   = leg_symbol,
+            target_delta = target_delta,
+            action       = "roll_challenged_leg",
+        )
+        if pos:
+            pos.challenged_side_recentered = True
+            log.info("adjustment.challenged_recentered_flag_set",
+                     position_id=position_id)
+
+    elif action == "roll_untested_leg":
+        log.info("adjustment.roll_untested",
+                 position_id=position_id,
+                 target_delta=target_delta or GREEKS_CFG.untested_roll_delta)
+        order_log.log_event(
+            "position.rolled",
+            position_id  = position_id,
+            leg_symbol   = leg_symbol,
+            target_delta = target_delta or GREEKS_CFG.untested_roll_delta,
+            action       = "roll_untested_leg",
+        )
+        if pos:
+            pos.challenged_side_recentered = False
+
+    elif action == "roll_out":
+        log.info("adjustment.roll_out_next_expiry",
+                 position_id=position_id, leg=leg_symbol)
+        order_log.log_event(
+            "position.rolled",
+            position_id = position_id,
+            leg_symbol  = leg_symbol,
+            action      = "roll_out_itm",
+        )
+
+    elif action == "low_vol_adjust":
+        log.info("adjustment.low_vol_protocol", position_id=position_id)
+        order_log.log_event(
+            "adjustment.completed",
+            position_id = position_id,
+            action      = "low_vol_protocol",
+            details     = details or {},
+        )
+
+    # Set cooldown to prevent whipsaw
+    state.hedging_engine.set_cooldown(position_id)
+
+    order_log.log_event(
+        "adjustment.completed",
+        position_id = position_id,
+        action      = action,
+    )
+
+    # ── Persist to PostgreSQL ──────────────────────────────────
+    try:
+        from modules.db import persist_position, persist_order_event
+        persist_position(pos)
+        persist_order_event(
+            position_id=position_id,
+            event_type="adjustment.completed",
+            action=action,
+            leg_symbol=leg_symbol,
+            details=details,
+        )
+    except Exception:
+        pass
+
+    return result
 
 
 @celery_app.task(
@@ -438,93 +566,9 @@ def execute_adjustment(
     target_delta: Optional[float] = None,
     details:      Optional[Dict] = None,
 ) -> Dict[str, Any]:
-    """
-    Execute a specific adjustment (roll, close, low-vol protocol).
-    Sets cooldown after execution.
-    """
+    """Celery wrapper around _do_adjustment."""
     try:
-        from app import get_system_state, get_execution_engine
-
-        state    = get_system_state()
-        exec_eng = get_execution_engine()
-        pos      = state.positions.get(position_id)
-
-        if not pos:
-            return {"status": "position_not_found"}
-
-        result = {"status": "executed", "action": action, "position_id": position_id}
-
-        if action == "close_all":
-            execute_position_exit.delay(position_id, reason="impulsive_move_close_all")
-
-        elif action == "roll_challenged_leg":
-            # Roll the challenged (tested) leg to next expiry at 16D.
-            # Accept a debit if necessary — do NOT roll untested side yet.
-            # Mark position so the untested-side guard can evaluate condition (a).
-            log.info("adjustment.roll_challenged",
-                     position_id=position_id, leg=leg_symbol,
-                     target_delta=target_delta)
-            order_log.log_event(
-                "position.rolled",
-                position_id  = position_id,
-                leg_symbol   = leg_symbol,
-                target_delta = target_delta,
-                action       = "roll_challenged_leg",
-            )
-            # Mark challenged side as re-centered so untested-side guard can fire
-            if pos:
-                pos.challenged_side_recentered = True
-                log.info("adjustment.challenged_recentered_flag_set",
-                         position_id=position_id)
-
-        elif action == "roll_untested_leg":
-            # Both conditions confirmed by DynamicHedgingEngine:
-            #   (a) challenged side already re-centered
-            #   (b) IV returned within 10% of entry IV
-            # Safe to roll untested side inward to 20D to collect additional credit.
-            log.info("adjustment.roll_untested",
-                     position_id=position_id,
-                     target_delta=target_delta or GREEKS_CFG.untested_roll_delta)
-            order_log.log_event(
-                "position.rolled",
-                position_id  = position_id,
-                leg_symbol   = leg_symbol,
-                target_delta = target_delta or GREEKS_CFG.untested_roll_delta,
-                action       = "roll_untested_leg",
-            )
-            # Reset the flag — position is now re-centered on both sides
-            if pos:
-                pos.challenged_side_recentered = False
-
-        elif action == "roll_out":
-            log.info("adjustment.roll_out_next_expiry",
-                     position_id=position_id, leg=leg_symbol)
-            order_log.log_event(
-                "position.rolled",
-                position_id = position_id,
-                leg_symbol  = leg_symbol,
-                action      = "roll_out_itm",
-            )
-
-        elif action == "low_vol_adjust":
-            log.info("adjustment.low_vol_protocol", position_id=position_id)
-            order_log.log_event(
-                "adjustment.completed",
-                position_id = position_id,
-                action      = "low_vol_protocol",
-                details     = details or {},
-            )
-
-        # Set cooldown to prevent whipsaw
-        state.hedging_engine.set_cooldown(position_id)
-
-        order_log.log_event(
-            "adjustment.completed",
-            position_id = position_id,
-            action      = action,
-        )
-        return result
-
+        return _do_adjustment(position_id, action, leg_symbol, target_delta, details)
     except Exception as exc:
         log.error("execute_adjustment.failed", error=str(exc))
         raise self.retry(exc=exc)
