@@ -99,6 +99,24 @@
     </div>
   </div>
 </div>
+
+<!-- Trade Details Modal -->
+<div class="modal fade" id="detailsModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Trade Execution Details</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="details-content">
+        <div class="text-center"><span class="spinner-border spinner-border-sm"></span> Loading...</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -146,6 +164,9 @@
         <td>${p.portfolio_vega.toFixed(4)}</td>
         <td>${p.legs_count}</td>
         <td>
+          <button class="btn btn-sm btn-outline-info" onclick="openDetails('${p.position_id}')" title="View execution details">
+            <i class="bi bi-info-circle"></i>
+          </button>
           ${p.state === 'ACTIVE' ? `<button class="btn btn-sm btn-outline-warning" onclick="openAdjust('${p.position_id}')">
             <i class="bi bi-wrench"></i>
           </button>` : ''}
@@ -191,6 +212,131 @@
     document.getElementById('adj-vix').value = '';
     document.getElementById('adj-spot5m').value = '';
     new bootstrap.Modal(document.getElementById('adjustModal')).show();
+  };
+
+  // Trade Details modal
+  window.openDetails = async function(posId) {
+    const detailsContent = document.getElementById('details-content');
+    detailsContent.innerHTML = '<div class="text-center"><span class="spinner-border spinner-border-sm"></span> Loading...</div>';
+
+    const detailsModal = new bootstrap.Modal(document.getElementById('detailsModal'));
+    detailsModal.show();
+
+    const res = await VRP.fetchJSON(`/api/v1/positions/${posId}/details`);
+    if (!res.ok) {
+      detailsContent.innerHTML = `<div class="alert alert-danger">${res.data.error || 'Failed to load details'}</div>`;
+      return;
+    }
+
+    const d = res.data;
+    let html = `
+      <div class="row g-3">
+        <div class="col-md-6">
+          <strong>Position ID:</strong>
+          <code>${d.position_id}</code>
+        </div>
+        <div class="col-md-6">
+          <strong>Symbol:</strong> ${d.symbol}
+        </div>
+        <div class="col-md-6">
+          <strong>Strategy:</strong> ${d.strategy}
+        </div>
+        <div class="col-md-6">
+          <strong>State:</strong> <span class="badge ${VRP.stateBadgeClass(d.state)}">${d.state}</span>
+        </div>
+        <div class="col-md-6">
+          <strong>Entry Time:</strong> ${d.entry_time ? new Date(d.entry_time).toLocaleString() : 'N/A'}
+        </div>
+        <div class="col-md-6">
+          <strong>Entry Spot:</strong> ${d.entry_spot?.toLocaleString('en-IN')}
+        </div>
+        <div class="col-md-6">
+          <strong>Entry IV:</strong> ${d.entry_iv?.toFixed(2)}%
+        </div>
+        <div class="col-md-6">
+          <strong>Max Profit:</strong> ₹${d.max_profit?.toLocaleString('en-IN', {maximumFractionDigits: 2})}
+          <span class="text-muted">(${d.max_profit_pct?.toFixed(1)}% of margin)</span>
+        </div>
+        <div class="col-md-6">
+          <strong>Lots:</strong> ${d.lots} × ${d.lot_size} = ${d.lots * d.lot_size} qty
+        </div>
+        <div class="col-md-6">
+          <strong>Margin Used:</strong> ₹${d.margin_used?.toLocaleString('en-IN', {maximumFractionDigits: 0})}
+        </div>
+        <div class="col-md-6">
+          <strong>Net P&amp;L:</strong> <span class="${VRP.pnlClass(d.net_pnl)}">${VRP.formatCurrency(d.net_pnl)}</span>
+        </div>
+        <div class="col-md-6">
+          <strong>P&amp;L %:</strong> <span class="${VRP.pnlClass(d.profit_pct)}">${d.profit_pct?.toFixed(2)}%</span>
+        </div>
+      </div>
+
+      <hr>
+
+      <h6 class="mb-3"><strong>Legs (${d.legs.length})</strong></h6>
+      <div class="table-responsive">
+        <table class="table table-sm table-dark-custom mb-3">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Strike</th>
+              <th>Type</th>
+              <th>Side</th>
+              <th>Entry</th>
+              <th>Current</th>
+              <th>Delta</th>
+              <th>Vega</th>
+              <th>Theta</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${d.legs.map(leg => `
+              <tr>
+                <td><code>${leg.symbol}</code></td>
+                <td>${leg.strike}</td>
+                <td>${leg.option_type}</td>
+                <td><span class="badge ${leg.is_long ? 'bg-success' : 'bg-danger'}">${leg.is_long ? 'LONG' : 'SHORT'}</span></td>
+                <td>${leg.entry_price?.toFixed(2)}</td>
+                <td>${leg.current_price?.toFixed(2)}</td>
+                <td>${leg.delta}</td>
+                <td>${leg.vega}</td>
+                <td>${leg.theta}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+
+      <h6 class="mb-3"><strong>Order Events (${d.events.length})</strong></h6>
+      <div class="table-responsive">
+        <table class="table table-sm table-dark-custom">
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>Event</th>
+              <th>Action</th>
+              <th>Leg Symbol</th>
+              <th>Fill Price</th>
+              <th>Order ID</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${d.events.length > 0 ? d.events.map(evt => `
+              <tr>
+                <td style="font-size:0.85rem;">${evt.timestamp ? new Date(evt.timestamp).toLocaleString() : 'N/A'}</td>
+                <td><span class="badge bg-secondary">${evt.event_type}</span></td>
+                <td>${evt.action}</td>
+                <td><code>${evt.leg_symbol}</code></td>
+                <td>${evt.fill_price?.toFixed(2) || 'N/A'}</td>
+                <td><code style="font-size:0.75rem;">${evt.order_id || 'N/A'}</code></td>
+              </tr>
+            `).join('') : '<tr><td colspan="6" class="text-center text-muted">No events recorded</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    detailsContent.innerHTML = html;
   };
 
   document.getElementById('adj-submit').addEventListener('click', async () => {

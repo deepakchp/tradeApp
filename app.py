@@ -13,6 +13,7 @@ API Endpoints:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -20,7 +21,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, date
 from typing import Any, Dict, List, Optional
 
 import structlog
@@ -368,6 +369,22 @@ def create_app() -> Flask:
                 "error": f"Max concurrent positions ({RISK_CFG.max_concurrent_positions}) reached"
             }), 409
 
+        # Guard: duplicate symbol — only one active position per underlying allowed
+        incoming_symbol = data.get("symbol", "")
+        if incoming_symbol:
+            dup = [
+                p for p in state.positions.values()
+                if p.symbol == incoming_symbol and p.state == PositionState.ACTIVE
+            ]
+            if dup:
+                return jsonify({
+                    "error": (
+                        f"Duplicate blocked: an active position for '{incoming_symbol}' "
+                        f"already exists ({dup[0].position_id}). "
+                        "Close or roll the existing position before opening a new one."
+                    )
+                }), 409
+
         # Guard: circuit-breaker — tighten VRP gate after drawdown month
         vrp_validator = VRPGateValidator(tightened=state.circuit_breaker_active)
 
@@ -531,6 +548,87 @@ def create_app() -> Flask:
     @app.route("/api/v1/positions", methods=["GET"])
     def list_positions():
         state = get_system_state()
+        market = get_market_data()
+
+        # ── Live refresh: update current_price + Greeks for active positions ─
+        active_positions = [
+            p for p in state.positions.values()
+            if p.state == PositionState.ACTIVE and p.legs
+        ]
+
+        if active_positions and state.broker and state.broker.is_connected:
+            # 1. Build batch LTP request — one call for all option legs + underlyings
+            leg_keys = {}        # "NFO:SYMBOL" -> list of (pos, leg)
+            underlying_keys = set()
+            for pos in active_positions:
+                # Underlying spot price key (NSE equity or NSE index)
+                if pos.symbol in ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"):
+                    ul_key = f"NSE:{pos.symbol} 50" if pos.symbol == "NIFTY" else f"NSE:{pos.symbol}"
+                else:
+                    ul_key = f"NSE:{pos.symbol}"
+                underlying_keys.add(ul_key)
+
+                for leg in pos.legs:
+                    key = f"{leg.exchange}:{leg.symbol}"
+                    leg_keys.setdefault(key, []).append((pos, leg))
+
+            try:
+                # Batch fetch: option LTPs + underlying spots in one call
+                all_keys = list(leg_keys.keys()) + list(underlying_keys)
+                quotes = state.broker.get_quote(all_keys)
+
+                # 2. Extract underlying spot prices
+                spot_prices = {}
+                for uk in underlying_keys:
+                    q = quotes.get(uk, {})
+                    ltp = q.get("last_price")
+                    if ltp and ltp > 0:
+                        # Derive the symbol name from the key
+                        sym = uk.split(":")[1]
+                        if sym == "NIFTY 50":
+                            sym = "NIFTY"
+                        elif sym == "NIFTY BANK":
+                            sym = "BANKNIFTY"
+                        spot_prices[sym] = ltp
+
+                # 3. Update each leg's current_price and Greeks
+                for key, pairs in leg_keys.items():
+                    q = quotes.get(key, {})
+                    live_ltp = q.get("last_price")
+                    if live_ltp is None or live_ltp <= 0:
+                        continue
+
+                    for pos, leg in pairs:
+                        leg.current_price = live_ltp
+
+                        # Recompute Greeks with live spot
+                        spot = spot_prices.get(pos.symbol, pos.entry_spot)
+                        T = leg.dte / 365.0
+                        if T > 0 and spot > 0:
+                            try:
+                                # Derive IV from live option price
+                                impl_vol = state.bs_engine.implied_vol(
+                                    S=spot, K=leg.strike, T=T,
+                                    market_price=live_ltp,
+                                    option_type=leg.option_type,
+                                )
+                                if impl_vol > 0:
+                                    leg.greeks = state.bs_engine.greeks(
+                                        S=spot, K=leg.strike, T=T,
+                                        sigma=impl_vol,
+                                        option_type=leg.option_type,
+                                    )
+                            except Exception:
+                                pass  # Keep existing greeks if recompute fails
+
+                log.debug("positions.live_refresh",
+                          legs_updated=sum(len(v) for v in leg_keys.values()),
+                          spots=spot_prices)
+
+            except Exception as e:
+                log.warning("positions.live_refresh_failed", error=str(e))
+
+        # ── Build response ──────────────────────────────────────────
         positions_data = []
         for pos in state.positions.values():
             positions_data.append({
@@ -549,6 +647,108 @@ def create_app() -> Flask:
                 "legs_count":      len(pos.legs),
             })
         return jsonify({"positions": positions_data, "count": len(positions_data)})
+
+    # ─────────────────────────────────────────────────────────────
+    # ENDPOINT: Position Execution Details (Legs + Order Events)
+    # ─────────────────────────────────────────────────────────────
+    @app.route("/api/v1/positions/<position_id>/details", methods=["GET"])
+    def position_details(position_id):
+        state = get_system_state()
+        pos = state.positions.get(position_id)
+
+        if not pos:
+            return jsonify({"error": "Position not found"}), 404
+
+        # Fetch order events from database
+        events_data = []
+        try:
+            from modules.db import SessionLocal, OrderEventRecord
+            session = SessionLocal()
+            try:
+                events = (
+                    session.query(OrderEventRecord)
+                    .filter_by(position_id=position_id)
+                    .order_by(OrderEventRecord.timestamp.desc())
+                    .all()
+                )
+                events_data = [
+                    {
+                        "event_type": e.event_type,
+                        "action": e.action,
+                        "leg_symbol": e.leg_symbol,
+                        "fill_price": e.fill_price,
+                        "order_id": e.order_id,
+                        "timestamp": e.timestamp.isoformat() if e.timestamp else None,
+                        "details": json.loads(e.details_json) if e.details_json else {},
+                    }
+                    for e in events
+                ]
+            finally:
+                session.close()
+        except Exception as db_err:
+            log.warning("position_details.db_unavailable", position_id=position_id, error=str(db_err))
+
+        # Build legs data
+        legs_data = [
+            {
+                "symbol": leg.symbol,
+                "strike": leg.strike,
+                "expiry": leg.expiry.isoformat() if isinstance(leg.expiry, date) else leg.expiry,
+                "option_type": leg.option_type.value if hasattr(leg.option_type, 'value') else leg.option_type,
+                "is_long": leg.is_long,
+                "lots": leg.lots,
+                "lot_size": leg.lot_size,
+                "entry_price": leg.entry_price,
+                "current_price": leg.current_price,
+                "delta": round(leg.greeks.delta, 4) if leg.greeks else None,
+                "gamma": round(leg.greeks.gamma, 4) if leg.greeks else None,
+                "vega": round(leg.greeks.vega, 4) if leg.greeks else None,
+                "theta": round(leg.greeks.theta, 4) if leg.greeks else None,
+            }
+            for leg in pos.legs
+        ]
+
+        # Compute lots / lot_size from first leg (all legs share the same)
+        total_lots = pos.legs[0].lots if pos.legs else 0
+        lot_size = pos.legs[0].lot_size if pos.legs else 0
+
+        # Estimate margin used: for IC/spread = wing width * lot_size * lots
+        # For strangles = approximate notional
+        margin_used = 0.0
+        short_legs = [l for l in pos.legs if not l.is_long]
+        long_legs = [l for l in pos.legs if l.is_long]
+        if long_legs and short_legs:
+            # Defined-risk: margin ≈ max wing width * lot_size * lots
+            max_width = 0
+            for sl in short_legs:
+                for ll in long_legs:
+                    if sl.option_type == ll.option_type:
+                        max_width = max(max_width, abs(sl.strike - ll.strike))
+            margin_used = max_width * lot_size * total_lots
+        elif short_legs:
+            # Naked/strangle: approximate margin as 5x credit
+            margin_used = pos.max_profit * 5 if pos.max_profit > 0 else 0
+
+        max_profit_pct = (pos.max_profit / margin_used * 100) if margin_used > 0 else 0.0
+
+        return jsonify({
+            "position_id": pos.position_id,
+            "symbol": pos.symbol,
+            "strategy": pos.strategy.value if hasattr(pos.strategy, 'value') else pos.strategy,
+            "state": pos.state.value if hasattr(pos.state, 'value') else pos.state,
+            "entry_time": pos.entry_time.isoformat() if pos.entry_time else None,
+            "entry_spot": pos.entry_spot,
+            "entry_iv": pos.entry_iv,
+            "max_profit": pos.max_profit,
+            "max_profit_pct": round(max_profit_pct, 1),
+            "net_pnl": round(pos.net_pnl, 2),
+            "profit_pct": round(pos.profit_pct * 100, 1),
+            "lots": total_lots,
+            "lot_size": lot_size,
+            "margin_used": round(margin_used, 2),
+            "legs": legs_data,
+            "events": events_data,
+        })
 
     # ─────────────────────────────────────────────────────────────
     # ENDPOINT: Portfolio Greeks
@@ -811,6 +1011,20 @@ def create_app() -> Flask:
 
                 pos.state = PositionState.CLOSED
                 net_pnl   = pos.net_pnl
+
+                # ── Persist to PostgreSQL ──────────────────────────────
+                try:
+                    from modules.db import persist_position, persist_order_event
+                    persist_position(pos)
+                    persist_order_event(
+                        position_id=pos.position_id,
+                        event_type="position.closed",
+                        action="kill_switch",
+                        details={"net_pnl": round(net_pnl, 2), "legs": leg_actions},
+                    )
+                except Exception as e:
+                    log.error("db.persist_kill_switch_close_failed",
+                              position_id=pos.position_id, error=str(e))
 
                 order_log.log_event(
                     "position.closed",

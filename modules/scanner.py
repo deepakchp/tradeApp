@@ -745,6 +745,13 @@ class AutoScanner:
                     key = f"{exchange}:{leg.tradingsymbol}"
                     leg.ltp = ltps.get(key, {}).get("last_price", 0)
 
+                # Reject if any leg has zero LTP — cannot price the trade
+                zero_legs = [l.tradingsymbol for l in legs if l.ltp <= 0]
+                if zero_legs:
+                    log.warning("scanner.zero_ltp_legs",
+                                symbol=symbol, legs=zero_legs)
+                    return None
+
             return legs if legs else None
 
         except Exception as e:
@@ -1069,7 +1076,50 @@ class AutoScanner:
             signal.status = "expired"
             return {"error": "Signal has expired"}
 
+        # ── Guard 1: Duplicate symbol ────────────────────────────────
+        # Block if there is already an ACTIVE position on the same underlying.
+        existing = [
+            p for p in self.state.positions.values()
+            if p.symbol == signal.symbol and p.state == PositionState.ACTIVE
+        ]
+        if existing:
+            log.warning("scanner.duplicate_symbol_blocked",
+                        signal_id=signal_id, symbol=signal.symbol,
+                        existing_position=existing[0].position_id)
+            return {
+                "error": (
+                    f"Duplicate blocked: an active position for '{signal.symbol}' "
+                    f"already exists ({existing[0].position_id})"
+                )
+            }
+
+        # ── Guard 2: Max concurrent positions ───────────────────────
+        active_count = sum(
+            1 for p in self.state.positions.values()
+            if p.state == PositionState.ACTIVE
+        )
+        if active_count >= RISK_CFG.max_concurrent_positions:
+            log.warning("scanner.max_positions_blocked",
+                        signal_id=signal_id, count=active_count,
+                        limit=RISK_CFG.max_concurrent_positions)
+            return {
+                "error": (
+                    f"Max concurrent positions ({RISK_CFG.max_concurrent_positions}) "
+                    f"already reached — cannot execute signal for '{signal.symbol}'"
+                )
+            }
+
         from config import PAPER_TRADE
+
+        # Guard: reject if any leg has zero LTP — cannot execute without price
+        zero_legs = [l.tradingsymbol for l in signal.legs if l.ltp <= 0]
+        if zero_legs:
+            log.warning("scanner.execute_zero_ltp_blocked",
+                        signal_id=signal_id, legs=zero_legs)
+            return {
+                "error": f"Cannot execute: legs with zero LTP: {zero_legs}. "
+                         "No valid market price available."
+            }
 
         order_ids = []
         exchange = SYMBOL_EXCHANGE.get(signal.symbol, "NFO")
@@ -1137,6 +1187,24 @@ class AutoScanner:
 
             self.state.positions[position_id] = position
             signal.status = "executed"
+
+            # ── Persist to PostgreSQL ──────────────────────────────────
+            try:
+                from modules.db import persist_position, persist_order_event
+                persist_position(position)
+                persist_order_event(
+                    position_id=position_id,
+                    event_type="position.opened",
+                    action=signal.strategy.value,
+                    details={
+                        "signal_id": signal_id,
+                        "order_ids": order_ids,
+                        "paper_trade": PAPER_TRADE,
+                    },
+                )
+            except Exception as e:
+                log.error("db.persist_on_scanner_execute_failed",
+                          position_id=position_id, error=str(e))
 
             log.info("scanner.signal_executed",
                      signal_id=signal_id,

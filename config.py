@@ -152,7 +152,7 @@ class RiskConfig:
     aum_inr:                float = 10_000_000.0   # ₹1 Cr default AUM
     max_premium_risk_pct:   float = 0.01            # 1% AUM per name in net premium
     max_loss_per_name_pct:  float = 0.02            # 2% AUM worst-case per position
-    max_concurrent_positions: int = 25       # Expanded for 100+ stock universe
+    max_concurrent_positions: int = 8        # Hard cap: 8 positions (2% AUM risk each = 16% deployed)
     max_positions_per_sector: int = 5       # Hard cap — GICS sector concentration limit
     # Beta-weighting
     portfolio_delta_limit_per_cr: float = 10.0     # ±10 Nifty units per ₹1Cr
