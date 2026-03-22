@@ -235,6 +235,18 @@ LOG_FILE    = os.getenv("LOG_FILE",  "logs/vrp_system.jsonl")
 
 
 # ─────────────────────────────────────────────────────────────────
+# EMAIL NOTIFICATIONS (env-var based — never hardcode credentials)
+# ─────────────────────────────────────────────────────────────────
+# EMAIL_SENDER       — sender Gmail address
+# EMAIL_APP_PASSWORD — Gmail App Password (2FA → App Passwords)
+# EMAIL_RECIPIENT    — recipient email address
+# EMAIL_ENABLED      — "true" / "false" (default: "true")
+# EMAIL_SMTP_HOST    — SMTP host (default: smtp.gmail.com)
+# EMAIL_SMTP_PORT    — SMTP port (default: 587)
+EMAIL_NOTIFICATIONS_ENABLED = os.getenv("EMAIL_ENABLED", "true").lower() == "true"
+
+
+# ─────────────────────────────────────────────────────────────────
 # AUTO-ENTRY SCANNER
 # ─────────────────────────────────────────────────────────────────
 @dataclass

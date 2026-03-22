@@ -433,6 +433,19 @@ def _do_position_exit(position_id: str, reason: str) -> Dict[str, Any]:
     except Exception:
         pass
 
+    # ── Email Notification ─────────────────────────────────────
+    try:
+        from modules.notifier import notify_position_exit
+        notify_position_exit(
+            position_id=position_id,
+            reason=reason,
+            symbol=getattr(pos, "symbol", "UNKNOWN"),
+            net_pnl=round(pos.net_pnl, 2),
+            fills=fills,
+        )
+    except Exception as exc:
+        log.warning("notifier.exit_email_failed", error=str(exc))
+
     return {"status": "closed", "position_id": position_id, "fills": fills}
 
 
@@ -548,6 +561,20 @@ def _do_adjustment(
         )
     except Exception:
         pass
+
+    # ── Email Notification ─────────────────────────────────────
+    try:
+        from modules.notifier import notify_adjustment
+        notify_adjustment(
+            position_id=position_id,
+            action=action,
+            symbol=getattr(pos, "symbol", "UNKNOWN"),
+            leg_symbol=leg_symbol,
+            target_delta=target_delta,
+            details=details,
+        )
+    except Exception as exc:
+        log.warning("notifier.adjustment_email_failed", error=str(exc))
 
     return result
 
