@@ -36,13 +36,22 @@ class Base(DeclarativeBase):
     pass
 
 
-_engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=5)
-SessionLocal = sessionmaker(bind=_engine)
+_engine = None
+SessionLocal = None
+
+
+def _get_engine():
+    global _engine, SessionLocal
+    if _engine is None:
+        _engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=5)
+        SessionLocal = sessionmaker(bind=_engine)
+    return _engine
 
 
 def init_db():
     """Create all tables if they don't exist."""
-    Base.metadata.create_all(_engine)
+    engine = _get_engine()
+    Base.metadata.create_all(engine)
     log.info("db.tables_created")
 
 
@@ -118,6 +127,7 @@ def persist_position(pos) -> None:
     """Upsert a Position dataclass into PostgreSQL."""
     from engine import Position  # Avoid circular import
     
+    _get_engine()
     session = SessionLocal()
     try:
         record = session.query(PositionRecord).filter_by(position_id=pos.position_id).first()
@@ -186,6 +196,7 @@ def persist_order_event(
     details: Optional[dict] = None,
 ) -> None:
     """Append an order lifecycle event to the database."""
+    _get_engine()
     session = SessionLocal()
     try:
         event = OrderEventRecord(
@@ -216,6 +227,7 @@ def load_all_positions() -> Dict[str, Any]:
         Position, OptionLeg, PositionState, StrategyType, OptionType, Greeks,
     )
 
+    _get_engine()
     session = SessionLocal()
     positions = {}
     try:
