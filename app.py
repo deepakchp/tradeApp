@@ -29,7 +29,7 @@ from flask import Flask, jsonify, request, g, render_template, redirect, url_for
 from flask_cors import CORS
 
 from config import (
-    FLASK_SECRET, FLASK_HOST, FLASK_PORT, DEBUG,
+    FLASK_SECRET, FLASK_HOST, FLASK_PORT, DEBUG, SKIP_LOGIN,
     LOG_LEVEL, LOG_FILE, RISK_CFG, BROKER, VRP_GATE,
     UNDERLYING_INSTRUMENTS, SYMBOL_EXCHANGE,
     GREEKS_CFG, LIFECYCLE_CFG, SLIPPAGE_CFG, WHIPSAW_CFG, SKEW_CFG,
@@ -1521,6 +1521,8 @@ def create_app() -> Flask:
     @app.before_request
     def require_broker_login():
         """Gate all page routes behind broker auth. APIs are exempt."""
+        if SKIP_LOGIN:
+            return None
         # Exempt paths: login page, static, APIs, broker auth endpoints
         exempt_prefixes = ("/login", "/static", "/api/", "/favicon")
         if any(request.path.startswith(p) for p in exempt_prefixes):
@@ -1532,6 +1534,8 @@ def create_app() -> Flask:
 
     @app.route("/")
     def index():
+        if SKIP_LOGIN:
+            return redirect(url_for("dashboard"))
         return redirect(url_for("login_page"))
 
     @app.route("/login")

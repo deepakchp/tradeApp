@@ -50,6 +50,7 @@ FLASK_SECRET   = os.getenv("FLASK_SECRET",   "change-me-in-production")
 FLASK_HOST     = os.getenv("FLASK_HOST",     "0.0.0.0")
 FLASK_PORT     = int(os.getenv("FLASK_PORT", "5050"))
 DEBUG          = os.getenv("DEBUG",          "false").lower() == "true"
+SKIP_LOGIN     = os.getenv("SKIP_LOGIN",     "false").lower() == "true"
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -276,22 +277,9 @@ AUTO_SCAN_SYMBOLS: List[str] = [
     "GRASIM", "CIPLA", "APOLLOHOSP", "HEROMOTOCO", "BPCL",
     "EICHERMOT", "COALINDIA", "BRITANNIA", "TATACONSUM", "BAJAJ-AUTO",
     "SBILIFE", "ADANIPORTS",
-    # ── NIFTY Next 50 F&O Stocks ─────────────────────────────────
-    "ABB", "AMBUJACEM", "BANKBARODA", "CANBK", "CHOLAFIN",
-    "COLPAL", "DABUR", "DLF", "GAIL", "GODREJCP",
-    "HAL", "HAVELLS", "HDFCLIFE", "ICICIPRULI", "INDIGO",
-    "IOC", "IRCTC", "JINDALSTEL", "LUPIN", "MARICO",
-    "NAUKRI", "PIDILITIND", "PNB", "SBICARD", "SHRIRAMFIN",
-    "SIEMENS", "SRF", "TATAPOWER", "TORNTPHARM", "TRENT",
-    "UPL", "VEDL", "ZOMATO", "ZYDUSLIFE",
-    # ── Additional NIFTY 100 F&O Stocks ──────────────────────────
-    "BEL", "MOTHERSON", "LICI", "JSWENERGY", "ATGL",
-    "CUMMINSIND", "LODHA", "OFSS", "MAXHEALTH", "POLYCAB",
-    "PERSISTENT", "PAYTM", "RECLTD", "PFC", "NHPC",
-    "BANKBARODA", "INDUSTOWER", "MPHASIS",
 ]
 
-# Nifty 100 stock symbols for batch backtesting (excludes index options)
+# Nifty 50 stock symbols for batch backtesting (excludes index options)
 _INDEX_SYMBOLS = {"NIFTY", "BANKNIFTY", "SENSEX", "MIDCPNIFTY"}
 BACKTEST_STOCK_SYMBOLS: List[str] = [
     sym for sym in AUTO_SCAN_SYMBOLS if sym not in _INDEX_SYMBOLS
@@ -368,59 +356,6 @@ LOT_SIZES: Dict[str, int] = {
     "BAJAJ-AUTO":  250,
     "SBILIFE":     500,
     "ADANIPORTS": 1250,
-    # ── NIFTY Next 50 Stocks ─────────────────────────────────────
-    "ABB":         125,
-    "AMBUJACEM":  1000,
-    "BANKBARODA": 2925,
-    "CANBK":      5400,
-    "CHOLAFIN":    500,
-    "COLPAL":      250,
-    "DABUR":      1250,
-    "DLF":         850,
-    "GAIL":       6100,
-    "GODREJCP":    500,
-    "HAL":         200,
-    "HAVELLS":     500,
-    "HDFCLIFE":   1100,
-    "ICICIPRULI":  1500,
-    "INDIGO":      300,
-    "IOC":        4750,
-    "IRCTC":       700,
-    "JINDALSTEL": 1250,
-    "LUPIN":       425,
-    "MARICO":     1200,
-    "NAUKRI":      225,
-    "PIDILITIND":  250,
-    "PNB":        8000,
-    "SBICARD":     850,
-    "SHRIRAMFIN":  250,
-    "SIEMENS":     150,
-    "SRF":         250,
-    "TATAPOWER":  2700,
-    "TORNTPHARM":  300,
-    "TRENT":       100,
-    "UPL":        1300,
-    "VEDL":       2000,
-    "ZOMATO":     4000,
-    "ZYDUSLIFE":   550,
-    # ── Additional NIFTY 100 F&O Stocks ──────────────────────────
-    "BEL":        3000,
-    "MOTHERSON":  5000,
-    "LICI":        700,
-    "JSWENERGY":  1500,
-    "ATGL":       1250,
-    "CUMMINSIND":  200,
-    "LODHA":       750,
-    "OFSS":         75,
-    "MAXHEALTH":   600,
-    "POLYCAB":     100,
-    "PERSISTENT":  150,
-    "PAYTM":       750,
-    "RECLTD":     1500,
-    "PFC":        1500,
-    "NHPC":       7500,
-    "INDUSTOWER":  2400,
-    "MPHASIS":     250,
 }
 
 # Underlying instrument keys for Kite quote API
@@ -437,17 +372,6 @@ _STOCK_SYMBOLS = [
     "GRASIM", "CIPLA", "APOLLOHOSP", "HEROMOTOCO", "BPCL",
     "EICHERMOT", "COALINDIA", "BRITANNIA", "TATACONSUM", "BAJAJ-AUTO",
     "SBILIFE", "ADANIPORTS",
-    "ABB", "AMBUJACEM", "BANKBARODA", "CANBK", "CHOLAFIN",
-    "COLPAL", "DABUR", "DLF", "GAIL", "GODREJCP",
-    "HAL", "HAVELLS", "HDFCLIFE", "ICICIPRULI", "INDIGO",
-    "IOC", "IRCTC", "JINDALSTEL", "LUPIN", "MARICO",
-    "NAUKRI", "PIDILITIND", "PNB", "SBICARD", "SHRIRAMFIN",
-    "SIEMENS", "SRF", "TATAPOWER", "TORNTPHARM", "TRENT",
-    "UPL", "VEDL", "ZOMATO", "ZYDUSLIFE",
-    "BEL", "MOTHERSON", "LICI", "JSWENERGY", "ATGL",
-    "CUMMINSIND", "LODHA", "OFSS", "MAXHEALTH", "POLYCAB",
-    "PERSISTENT", "PAYTM", "RECLTD", "PFC", "NHPC",
-    "INDUSTOWER", "MPHASIS",
 ]
 
 UNDERLYING_INSTRUMENTS: Dict[str, str] = {
@@ -481,39 +405,26 @@ STRIKE_STEPS: Dict[str, int] = {
     "MIDCPNIFTY": 25,
     # ── Stocks: price > ₹5000 → step 100 ────────────────────────
     "MARUTI":     100, "ULTRACEMCO": 100, "NESTLEIND": 250,
-    "APOLLOHOSP": 100, "BAJAJ-AUTO": 100, "ABB": 100, "SIEMENS": 100,
-    "BAJFINANCE": 100, "DRREDDY": 100,
+    "APOLLOHOSP": 100, "BAJAJ-AUTO": 100, "BAJFINANCE": 100, "DRREDDY": 100,
     # ── Stocks: price ₹2000-5000 → step 50 ──────────────────────
     "RELIANCE": 50, "TCS": 50, "TITAN": 50, "ASIANPAINT": 50,
     "LT": 50, "GRASIM": 50, "HEROMOTOCO": 50, "EICHERMOT": 50,
     "BRITANNIA": 50, "DIVISLAB": 50, "M&M": 50, "ADANIENT": 50,
-    "BAJAJFINSV": 50, "PIDILITIND": 50, "SHRIRAMFIN": 50, "SRF": 50,
-    "TORNTPHARM": 50, "TRENT": 50, "NAUKRI": 50, "INDIGO": 50,
-    "COLPAL": 50, "HAL": 50, "CUMMINSIND": 50, "OFSS": 50,
-    "POLYCAB": 50, "HINDUNILVR": 50,
+    "BAJAJFINSV": 50, "HINDUNILVR": 50,
     # ── Stocks: price ₹1000-2000 → step 20 ──────────────────────
     "HDFCBANK": 20, "INFY": 25, "BHARTIARTL": 20, "KOTAKBANK": 25,
     "HCLTECH": 25, "SUNPHARMA": 25, "ICICIBANK": 20, "AXISBANK": 20,
     "TECHM": 20, "INDUSINDBK": 20, "CIPLA": 20, "SBILIFE": 20,
-    "ADANIPORTS": 20, "LUPIN": 20, "GODREJCP": 20, "HAVELLS": 20,
-    "CHOLAFIN": 20, "IRCTC": 20, "JINDALSTEL": 20,
-    "ZYDUSLIFE": 20, "MAXHEALTH": 20, "LODHA": 20, "PERSISTENT": 20,
-    "MPHASIS": 20, "LICI": 20,
+    "ADANIPORTS": 20,
     # ── Stocks: price ₹500-1000 → step 10 ────────────────────────
-    "SBIN": 10, "TATACONSUM": 10, "DLF": 10, "HDFCLIFE": 10,
-    "ICICIPRULI": 10, "SBICARD": 10, "AMBUJACEM": 10,
-    "TATAMOTORS": 10, "JSWSTEEL": 10, "MARICO": 10,
-    "DABUR": 10, "VEDL": 10, "WIPRO": 10, "BPCL": 10,
-    "COALINDIA": 10, "HINDALCO": 10, "JSWENERGY": 10,
-    "UPL": 10, "PAYTM": 10,
+    "SBIN": 10, "TATACONSUM": 10,
+    "TATAMOTORS": 10, "JSWSTEEL": 10,
+    "WIPRO": 10, "BPCL": 10,
+    "COALINDIA": 10, "HINDALCO": 10,
     # ── Stocks: price ₹100-500 → step 5 ──────────────────────────
     "ITC": 5, "NTPC": 5, "ONGC": 5, "POWERGRID": 5,
-    "BANKBARODA": 5, "GAIL": 5, "IOC": 5, "TATAPOWER": 5,
-    "BEL": 5, "ATGL": 5, "RECLTD": 5, "PFC": 5,
-    "INDUSTOWER": 5, "ZOMATO": 5,
     # ── Stocks: price < ₹100 → step 2 ────────────────────────────
-    "TATASTEEL": 2, "CANBK": 2, "PNB": 2, "NHPC": 2,
-    "MOTHERSON": 2,
+    "TATASTEEL": 2,
 }
 
 # Expiry cadence per symbol (SEBI Nov 2024: only 1 weekly benchmark per exchange)
@@ -533,48 +444,31 @@ SYMBOL_SECTOR: Dict[str, str] = {
     "HDFCBANK": "Financials", "ICICIBANK": "Financials", "SBIN": "Financials",
     "KOTAKBANK": "Financials", "AXISBANK": "Financials", "BAJFINANCE": "Financials",
     "BAJAJFINSV": "Financials", "INDUSINDBK": "Financials", "SBILIFE": "Financials",
-    "HDFCLIFE": "Financials", "ICICIPRULI": "Financials", "BANKBARODA": "Financials",
-    "CANBK": "Financials", "PNB": "Financials", "CHOLAFIN": "Financials",
-    "SBICARD": "Financials", "SHRIRAMFIN": "Financials", "LICI": "Financials",
-    "PFC": "Financials", "RECLTD": "Financials", "PAYTM": "Financials",
     # ── Information Technology ────────────────────────────────────
     "TCS": "InfoTech", "INFY": "InfoTech", "HCLTECH": "InfoTech",
-    "WIPRO": "InfoTech", "TECHM": "InfoTech", "NAUKRI": "InfoTech",
-    "PERSISTENT": "InfoTech", "MPHASIS": "InfoTech", "OFSS": "InfoTech",
+    "WIPRO": "InfoTech", "TECHM": "InfoTech",
     # ── Energy ────────────────────────────────────────────────────
     "RELIANCE": "Energy", "ONGC": "Energy", "BPCL": "Energy",
-    "IOC": "Energy", "GAIL": "Energy", "COALINDIA": "Energy",
-    "NTPC": "Energy", "POWERGRID": "Energy", "TATAPOWER": "Energy",
-    "ADANIENT": "Energy", "JSWENERGY": "Energy", "ATGL": "Energy", "NHPC": "Energy",
+    "COALINDIA": "Energy", "NTPC": "Energy", "POWERGRID": "Energy",
+    "ADANIENT": "Energy",
     # ── Materials ─────────────────────────────────────────────────
     "TATASTEEL": "Materials", "JSWSTEEL": "Materials", "HINDALCO": "Materials",
-    "ULTRACEMCO": "Materials", "GRASIM": "Materials", "AMBUJACEM": "Materials",
-    "JINDALSTEL": "Materials", "UPL": "Materials", "VEDL": "Materials",
+    "ULTRACEMCO": "Materials", "GRASIM": "Materials",
     # ── Consumer Staples ──────────────────────────────────────────
     "HINDUNILVR": "ConsumerStaples", "ITC": "ConsumerStaples",
     "NESTLEIND": "ConsumerStaples", "BRITANNIA": "ConsumerStaples",
-    "TATACONSUM": "ConsumerStaples", "DABUR": "ConsumerStaples",
-    "COLPAL": "ConsumerStaples", "MARICO": "ConsumerStaples",
-    "GODREJCP": "ConsumerStaples",
+    "TATACONSUM": "ConsumerStaples",
     # ── Consumer Discretionary ────────────────────────────────────
     "MARUTI": "ConsumerDisc", "TATAMOTORS": "ConsumerDisc", "M&M": "ConsumerDisc",
     "BAJAJ-AUTO": "ConsumerDisc", "EICHERMOT": "ConsumerDisc", "TITAN": "ConsumerDisc",
-    "ASIANPAINT": "ConsumerDisc", "TRENT": "ConsumerDisc", "ZOMATO": "ConsumerDisc",
-    "INDIGO": "ConsumerDisc", "IRCTC": "ConsumerDisc", "LODHA": "ConsumerDisc",
+    "ASIANPAINT": "ConsumerDisc",
     # ── Healthcare ────────────────────────────────────────────────
     "SUNPHARMA": "Healthcare", "DRREDDY": "Healthcare", "CIPLA": "Healthcare",
-    "DIVISLAB": "Healthcare", "APOLLOHOSP": "Healthcare", "LUPIN": "Healthcare",
-    "TORNTPHARM": "Healthcare", "ZYDUSLIFE": "Healthcare", "MAXHEALTH": "Healthcare",
+    "DIVISLAB": "Healthcare", "APOLLOHOSP": "Healthcare",
     # ── Industrials ───────────────────────────────────────────────
     "LT": "Industrials", "HEROMOTOCO": "Industrials", "ADANIPORTS": "Industrials",
-    "HAL": "Industrials", "SIEMENS": "Industrials", "ABB": "Industrials",
-    "BEL": "Industrials", "CUMMINSIND": "Industrials", "MOTHERSON": "Industrials",
-    "POLYCAB": "Industrials", "HAVELLS": "Industrials",
     # ── Communication Services ────────────────────────────────────
-    "BHARTIARTL": "CommServices", "INDUSTOWER": "CommServices",
-    # ── Real Estate ───────────────────────────────────────────────
-    "DLF": "RealEstate", "PIDILITIND": "RealEstate",
-    "SRF": "RealEstate",
+    "BHARTIARTL": "CommServices",
 }
 
 # Order product type (NRML for overnight F&O — never MIS for VRP positions)

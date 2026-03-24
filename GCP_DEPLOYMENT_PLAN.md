@@ -92,3 +92,6 @@ systemctl restart nginx
 ## 3. Logs & Maintenance
 - **Supervisord UI:** You can access the supervisor UI by navigating to `http://<YOUR_EXTERNAL_IP>:9001` (Note: Ensure you configure a password in `supervisord.conf` before opening this port publicly!)
 - **Logs:** Connect to the VM via SSH (`gcloud compute ssh trade-engine-server`), and check your logs in `/opt/tradeApp/logs/` or `/tmp/` depending on your `supervisord.conf` settings.
+
+
+nohup supervisord -c supervisord.conf > supervisord.log 2>&1 &

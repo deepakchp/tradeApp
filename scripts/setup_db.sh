@@ -314,7 +314,7 @@ SQL
 echo -e "${GREEN}done${NC}"
 
 # ── 6. Verify ─────────────────────────────────────────────────
-echo -n "[5/5] Verifying... "
+echo -n "[6/6] Verifying... "
 TABLE_COUNT=$(psql -U "${DB_USER}" -h "${DB_HOST}" -p "${DB_PORT}" -d "${DB_NAME}" -tAc \
     "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE';" 2>/dev/null)
 
@@ -335,6 +335,14 @@ echo "    postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
 echo ""
 echo "  Tables:"
 psql -U "${DB_USER}" -h "${DB_HOST}" -p "${DB_PORT}" -d "${DB_NAME}" -c "\dt" 2>/dev/null
+echo ""
+echo "  Sample data summary:"
+psql -U "${DB_USER}" -h "${DB_HOST}" -p "${DB_PORT}" -d "${DB_NAME}" -c "
+    SELECT position_id, symbol, strategy, state,
+           to_char(entry_time, 'DD-Mon-YY') AS entered,
+           max_profit AS max_pnl
+    FROM positions ORDER BY entry_time;
+" 2>/dev/null
 echo ""
 echo "  Test from Python:"
 echo "    python -c \"from modules.db import init_db; init_db()\""
