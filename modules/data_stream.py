@@ -42,6 +42,11 @@ class MarketDataStreamer:
         self.REDIS_VOL_KEY = "vrp:market_data:vol"
         self.REDIS_OHLC_KEY = "vrp:market_data:ohlc"
         self.REDIS_DEPTH_KEY = "vrp:market_data:depth"
+        self.REDIS_VIX_KEY = "vrp:market_data:india_vix"
+        self.REDIS_SPOT_5M_PREFIX = "vrp:market_data:spot_5m:"
+
+        # India VIX instrument token (set via subscribe_vix)
+        self.vix_token: int | None = None
 
         # Bind callbacks
         self.ticker.on_ticks = self._on_ticks
@@ -104,6 +109,17 @@ class MarketDataStreamer:
         for t in tokens_to_remove:
             self.subscribed_tokens.remove(t)
 
+    def subscribe_vix(self, broker) -> None:
+        """Subscribe to India VIX instrument token for real-time VIX updates."""
+        try:
+            vix_token = broker.get_instrument_token("INDIA VIX", "NSE")
+            if vix_token:
+                self.vix_token = vix_token
+                self.subscribe([vix_token])
+                log.info("streamer.vix_subscribed", token=vix_token)
+        except Exception as e:
+            log.warning("streamer.vix_subscribe_failed", error=str(e))
+
     # ── KiteTicker Callbacks ──────────────────────────────────────
 
     def _calculate_vwap(self, depth_levels: List[Dict[str, Any]]) -> float:
@@ -136,6 +152,16 @@ class MarketDataStreamer:
             # LTP
             if last_price is not None:
                 pipeline.hset(self.REDIS_LTP_KEY, token_str, last_price)
+
+                # Fix 4: India VIX — write to dedicated key for instant access
+                if token == self.vix_token:
+                    pipeline.set(self.REDIS_VIX_KEY, last_price)
+
+                # Fix 1: spot_5m — rolling 6-minute sorted set for 5-min lookback
+                spot_5m_key = self.REDIS_SPOT_5M_PREFIX + token_str
+                now_ts = time.time()
+                pipeline.zadd(spot_5m_key, {str(last_price): now_ts})
+                pipeline.zremrangebyscore(spot_5m_key, "-inf", now_ts - 360)
             
             # Volume
             if "volume_traded" in tick:

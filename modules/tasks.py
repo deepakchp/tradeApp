@@ -208,8 +208,18 @@ def run_delta_monitor(self) -> Dict[str, Any]:
                 
             curr_iv  = market.get("iv", {}).get(pos.symbol, pos.entry_iv)
             vix      = market.get("india_vix", 15.0)
-            spot_5m  = market.get("spot_5m", {}).get(pos.symbol, spot)
-            avg_vol  = market.get("avg_volume", {}).get(pos.symbol, 1)
+
+            # Fix 1: spot_5m from WebSocket sorted set via token lookup
+            if symbol_token and "raw_spot_5m" in market and symbol_token in market["raw_spot_5m"]:
+                spot_5m = market["raw_spot_5m"][symbol_token]
+            else:
+                spot_5m = market.get("spot_5m", {}).get(pos.symbol, spot)
+
+            # Fix 2: avg_volume from daily historical computation via token lookup
+            if symbol_token and "raw_avg_volume" in market and symbol_token in market["raw_avg_volume"]:
+                avg_vol = market["raw_avg_volume"][symbol_token]
+            else:
+                avg_vol = market.get("avg_volume", {}).get(pos.symbol, 1)
 
             decision = state.hedging_engine.evaluate_position(
                 position      = pos,
@@ -677,4 +687,83 @@ def run_position_reconciliation(self) -> Dict[str, Any]:
 
     except Exception as exc:
         log.error("reconciliation.failed", error=str(exc))
+        raise self.retry(exc=exc)
+
+
+# ─────────────────────────────────────────────────────────────────
+# FIX 2: COMPUTE 20-DAY AVERAGE VOLUME
+# Runs once at startup and daily before market open.
+# ─────────────────────────────────────────────────────────────────
+
+@celery_app.task(
+    name="modules.tasks.compute_avg_volumes",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=60,
+)
+def compute_avg_volumes(self) -> Dict[str, Any]:
+    """
+    Compute 20-day average daily volume for all active underlyings.
+    Stores results in Redis hash 'vrp:market_data:avg_volume' keyed by instrument token.
+    Skips re-computation if already done today (guard key with 24h TTL).
+    """
+    import redis as _redis
+    from datetime import date, timedelta
+
+    try:
+        from app import get_system_state
+        from config import UNDERLYING_INSTRUMENTS, REDIS_URL
+
+        r = _redis.from_url(REDIS_URL, decode_responses=True)
+
+        # Guard: skip if already computed today
+        today_str = date.today().isoformat()
+        guard_key = "vrp:avg_volume:computed_date"
+        if r.get(guard_key) == today_str:
+            log.info("avg_volumes.already_computed", date=today_str)
+            return {"status": "skipped", "reason": "already_computed_today"}
+
+        state = get_system_state()
+        if not state.broker or not state.broker.is_connected:
+            log.warning("avg_volumes.broker_not_connected")
+            return {"status": "skipped", "reason": "broker_not_connected"}
+
+        end_date = date.today() - timedelta(days=1)
+        start_date = end_date - timedelta(days=30)  # ~20 trading days
+        computed = 0
+
+        for symbol, inst_key in UNDERLYING_INSTRUMENTS.items():
+            try:
+                exchange, tradingsymbol = inst_key.split(":", 1)
+                token = state.broker.get_instrument_token(tradingsymbol, exchange)
+                if token is None:
+                    continue
+
+                candles = state.broker.get_historical_data(
+                    instrument_token=token,
+                    from_date=start_date,
+                    to_date=end_date,
+                    interval="day",
+                )
+
+                if candles:
+                    avg_vol = sum(c.get("volume", 0) for c in candles) / len(candles)
+                    r.hset("vrp:market_data:avg_volume", str(token), round(avg_vol))
+                    computed += 1
+
+                # Kite rate limit: 3 historical requests/sec
+                time.sleep(0.35)
+
+            except Exception as e:
+                log.warning("avg_volumes.symbol_failed", symbol=symbol, error=str(e))
+                continue
+
+        # Set guard key
+        r.set(guard_key, today_str, ex=86400)
+
+        log.info("avg_volumes.completed", symbols_computed=computed)
+        return {"status": "completed", "symbols_computed": computed}
+
+    except Exception as exc:
+        log.error("avg_volumes.failed", error=str(exc))
         raise self.retry(exc=exc)

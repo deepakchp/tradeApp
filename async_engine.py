@@ -56,18 +56,45 @@ class AsyncTradeEngine:
 
     async def fetch_market_data(self) -> Dict[str, Any]:
         """Fetch current full market data natively via async Redis."""
+        import time as _time
+
         ltp_data = await self.redis.hgetall("vrp:market_data:ltp")
         vol_data = await self.redis.hgetall("vrp:market_data:vol")
-        
+
+        # Fix 4: India VIX from WebSocket
+        vix_val = await self.redis.get("vrp:market_data:india_vix")
+        india_vix = float(vix_val) if vix_val else 15.0
+
+        # Fix 3: Per-symbol IV from position refresh
+        iv_data = await self.redis.hgetall("vrp:market_data:iv")
+        iv_map = {k: float(v) for k, v in iv_data.items()}
+
+        # Fix 2: 20-day average volume
+        avg_vol_data = await self.redis.hgetall("vrp:market_data:avg_volume")
+        raw_avg_volume = {int(k): float(v) for k, v in avg_vol_data.items()}
+
+        # Fix 1: spot_5m from sorted sets
+        now_ts = _time.time()
+        raw_spot_5m = {}
+        for token_str in ltp_data.keys():
+            vals = await self.redis.zrangebyscore(
+                f"vrp:market_data:spot_5m:{token_str}",
+                now_ts - 330, now_ts - 270,
+            )
+            if vals:
+                raw_spot_5m[int(token_str)] = float(vals[0])
+
         market = {
             "spot": {},
-            "iv": {},
+            "iv": iv_map,
             "spot_5m": {},
             "volume": {},
             "avg_volume": {},
-            "india_vix": 15.0, # Will need a stream for this or a fetcher
+            "india_vix": india_vix,
             "raw_ltp": {int(k): float(v) for k, v in ltp_data.items()},
-            "raw_vol": {int(k): float(v) for k, v in vol_data.items()}
+            "raw_vol": {int(k): float(v) for k, v in vol_data.items()},
+            "raw_avg_volume": raw_avg_volume,
+            "raw_spot_5m": raw_spot_5m,
         }
         return market
 
@@ -83,9 +110,27 @@ class AsyncTradeEngine:
             spot     = market["spot"].get(pos.symbol, 0) or last_price
             curr_iv  = market["iv"].get(pos.symbol, pos.entry_iv)
             vix      = market.get("india_vix", 15.0)
-            spot_5m  = market["spot_5m"].get(pos.symbol, spot)
-            vol_now  = market["volume"].get(pos.symbol, 0)
-            avg_vol  = market["avg_volume"].get(pos.symbol, 1)
+
+            # Resolve token for this position's underlying
+            symbol_token = self.state.broker.get_instrument_token(pos.symbol) if self.state.broker else None
+
+            # Fix 1: spot_5m from sorted set via token
+            if symbol_token and symbol_token in market.get("raw_spot_5m", {}):
+                spot_5m = market["raw_spot_5m"][symbol_token]
+            else:
+                spot_5m = market["spot_5m"].get(pos.symbol, spot)
+
+            # Volume from WebSocket
+            if symbol_token and symbol_token in market.get("raw_vol", {}):
+                vol_now = market["raw_vol"][symbol_token]
+            else:
+                vol_now = market["volume"].get(pos.symbol, 0)
+
+            # Fix 2: avg_volume from daily computation via token
+            if symbol_token and symbol_token in market.get("raw_avg_volume", {}):
+                avg_vol = market["raw_avg_volume"][symbol_token]
+            else:
+                avg_vol = market["avg_volume"].get(pos.symbol, 1)
 
             # ── LIVE GREEKS RECOMPUTATION (Upgrade #2) ────────────
             # Recompute Greeks with fresh spot price on every tick.

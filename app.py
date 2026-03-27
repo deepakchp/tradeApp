@@ -137,6 +137,55 @@ _backtest_cache: Optional[Dict[str, Any]] = None
 _last_market_data: Dict[str, Any] = _market_data.copy()
 
 
+def _start_avg_volume_computation(broker) -> None:
+    """Compute 20-day avg volume in a background thread (runs in Flask process)."""
+    import threading
+    from datetime import timedelta
+
+    def _compute():
+        from config import UNDERLYING_INSTRUMENTS
+        try:
+            today_str = date.today().isoformat()
+            guard_key = "vrp:avg_volume:computed_date"
+            if _redis_client.get(guard_key) == today_str:
+                log.info("avg_volumes.already_computed", date=today_str)
+                return
+
+            end_date = date.today() - timedelta(days=1)
+            start_date = end_date - timedelta(days=30)
+            computed = 0
+
+            for symbol, inst_key in UNDERLYING_INSTRUMENTS.items():
+                try:
+                    exchange, tradingsymbol = inst_key.split(":", 1)
+                    token = broker.get_instrument_token(tradingsymbol, exchange)
+                    if token is None:
+                        continue
+                    candles = broker.get_historical_data(
+                        instrument_token=token,
+                        from_date=start_date,
+                        to_date=end_date,
+                        interval="day",
+                    )
+                    if candles:
+                        avg_vol = sum(c.get("volume", 0) for c in candles) / len(candles)
+                        _redis_client.hset("vrp:market_data:avg_volume", str(token), round(avg_vol))
+                        computed += 1
+                    import time
+                    time.sleep(0.35)  # Kite rate limit: 3 req/sec
+                except Exception as e:
+                    log.warning("avg_volumes.symbol_failed", symbol=symbol, error=str(e))
+
+            _redis_client.set(guard_key, today_str, ex=86400)
+            log.info("avg_volumes.completed", symbols_computed=computed)
+        except Exception as e:
+            log.error("avg_volumes.failed", error=str(e))
+
+    t = threading.Thread(target=_compute, daemon=True, name="avg-volume-compute")
+    t.start()
+    log.info("avg_volumes.thread_started")
+
+
 def get_system_state() -> SystemState:
     global _system_state
     if _system_state is None:
@@ -165,7 +214,11 @@ def get_system_state() -> SystemState:
                     from modules.data_stream import MarketDataStreamer
                     _system_state.streamer = MarketDataStreamer(ticker)
                     _system_state.streamer.start()
+                    _system_state.streamer.subscribe_vix(_system_state.broker)
                     log.info("streamer.auto_started_from_env")
+                # Trigger daily avg volume computation in a background thread
+                # (runs in Flask process where broker session is available)
+                _start_avg_volume_computation(_system_state.broker)
     return _system_state
 
 
@@ -175,25 +228,47 @@ def get_market_data() -> Dict[str, Any]:
         # Pull real-time data from Redis replica
         ltp_data = _redis_client.hgetall("vrp:market_data:ltp")
         vol_data = _redis_client.hgetall("vrp:market_data:vol")
-        
+
+        # Fix 4: India VIX from WebSocket (dedicated Redis key)
+        vix_from_redis = _redis_client.get("vrp:market_data:india_vix")
+        india_vix = float(vix_from_redis) if vix_from_redis else _last_market_data.get("india_vix", 15.0)
+
+        # Fix 3: Per-symbol IV from position refresh
+        iv_data = _redis_client.hgetall("vrp:market_data:iv")
+        iv_map = {k: float(v) for k, v in iv_data.items()}
+
+        # Fix 2: 20-day average volume from daily task
+        avg_vol_data = _redis_client.hgetall("vrp:market_data:avg_volume")
+        raw_avg_volume = {int(k): float(v) for k, v in avg_vol_data.items()}
+
         market = {
             "spot": {},
-            "iv": {}, # Still need IV surface logic here or separate from _last_market_data
+            "iv": iv_map,
             "spot_5m": _last_market_data.get("spot_5m", {}),
             "volume": {},
             "avg_volume": _last_market_data.get("avg_volume", {}),
-            "india_vix": _last_market_data.get("india_vix", 15.0),
+            "india_vix": india_vix,
         }
-        
-        # We need token-to-symbol mapping, in a real system we'd look this up
-        # For now, we will assume the caller pulls the Ltp dict to look up by token if needed
-        # Or we can just return the raw token -> value mapping
+
         market["raw_ltp"] = {int(k): float(v) for k, v in ltp_data.items()}
         market["raw_vol"] = {int(k): float(v) for k, v in vol_data.items()}
-        
+        market["raw_avg_volume"] = raw_avg_volume
+
+        # Fix 1: spot_5m — pull 5-minute-ago prices from sorted sets
+        now_ts = __import__("time").time()
+        raw_spot_5m = {}
+        for token_str in ltp_data.keys():
+            vals = _redis_client.zrangebyscore(
+                f"vrp:market_data:spot_5m:{token_str}",
+                now_ts - 330, now_ts - 270,  # 4.5 to 5.5 minutes ago
+            )
+            if vals:
+                raw_spot_5m[int(token_str)] = float(vals[0])
+        market["raw_spot_5m"] = raw_spot_5m
+
         # Merge over any manual fetches done via the old /api/v1/market/live
         market["spot"].update(_last_market_data.get("spot", {}))
-        
+
         return market
     except Exception as e:
         log.error("market_data.redis_pull_failed", error=str(e))
@@ -323,6 +398,115 @@ def create_app() -> Flask:
             },
             "paper_trade": PAPER_TRADE,
             "kill_switch": state.kill_switch_active,
+        })
+
+    # ─────────────────────────────────────────────────────────────
+    # ENDPOINT: Data Feed Status — checks all 4 live market data signals
+    # ─────────────────────────────────────────────────────────────
+    @app.route("/api/v1/data-feed/status", methods=["GET"])
+    def data_feed_status():
+        """
+        Returns the health of each data feed signal:
+          - india_vix: WebSocket VIX stream
+          - spot_5m:   5-minute price lookback buffer
+          - iv:        Per-symbol implied volatility
+          - avg_volume: 20-day average volume
+          - websocket:  KiteTicker streamer status
+          - ltp:        Real-time LTP feed
+        """
+        import time as _time
+        state = get_system_state()
+        now = _time.time()
+
+        feeds = {}
+
+        # 1. India VIX (from WebSocket via Redis string key)
+        try:
+            vix_val = _redis_client.get("vrp:market_data:india_vix")
+            feeds["india_vix"] = {
+                "ok": vix_val is not None,
+                "value": round(float(vix_val), 2) if vix_val else None,
+                "source": "websocket",
+            }
+        except Exception:
+            feeds["india_vix"] = {"ok": False, "value": None, "source": "websocket"}
+
+        # 2. spot_5m (sorted sets — check if any token has data within last 6 min)
+        try:
+            ltp_keys = _redis_client.hkeys("vrp:market_data:ltp")
+            spot5m_count = 0
+            for token_str in ltp_keys[:10]:  # Sample first 10 tokens
+                count = _redis_client.zcount(
+                    f"vrp:market_data:spot_5m:{token_str}",
+                    now - 360, now,
+                )
+                if count > 0:
+                    spot5m_count += 1
+            feeds["spot_5m"] = {
+                "ok": spot5m_count > 0,
+                "tokens_with_data": spot5m_count,
+                "tokens_sampled": min(len(ltp_keys), 10),
+                "source": "websocket_sorted_set",
+            }
+        except Exception:
+            feeds["spot_5m"] = {"ok": False, "tokens_with_data": 0, "tokens_sampled": 0, "source": "websocket_sorted_set"}
+
+        # 3. IV per symbol (hash — check count and sample)
+        try:
+            iv_data = _redis_client.hgetall("vrp:market_data:iv")
+            sample = {k: round(float(v), 1) for k, v in list(iv_data.items())[:5]}
+            feeds["iv"] = {
+                "ok": len(iv_data) > 0,
+                "symbols_count": len(iv_data),
+                "sample": sample,
+                "source": "position_refresh",
+            }
+        except Exception:
+            feeds["iv"] = {"ok": False, "symbols_count": 0, "sample": {}, "source": "position_refresh"}
+
+        # 4. avg_volume (hash + guard key)
+        try:
+            avg_data = _redis_client.hgetall("vrp:market_data:avg_volume")
+            guard_date = _redis_client.get("vrp:avg_volume:computed_date")
+            feeds["avg_volume"] = {
+                "ok": len(avg_data) > 0,
+                "symbols_count": len(avg_data),
+                "computed_date": guard_date,
+                "source": "daily_historical_task",
+            }
+        except Exception:
+            feeds["avg_volume"] = {"ok": False, "symbols_count": 0, "computed_date": None, "source": "daily_historical_task"}
+
+        # 5. WebSocket streamer
+        streamer_ok = state.streamer is not None and state.streamer.is_running
+        vix_subscribed = (
+            state.streamer is not None
+            and state.streamer.vix_token is not None
+        )
+        feeds["websocket"] = {
+            "ok": streamer_ok,
+            "vix_subscribed": vix_subscribed,
+            "subscribed_tokens": len(state.streamer.subscribed_tokens) if state.streamer else 0,
+            "source": "kite_ticker",
+        }
+
+        # 6. LTP feed (hash — check if any ticks exist)
+        try:
+            ltp_count = _redis_client.hlen("vrp:market_data:ltp")
+            feeds["ltp"] = {
+                "ok": ltp_count > 0,
+                "tokens_count": ltp_count,
+                "source": "websocket_hash",
+            }
+        except Exception:
+            feeds["ltp"] = {"ok": False, "tokens_count": 0, "source": "websocket_hash"}
+
+        all_ok = all(f["ok"] for f in feeds.values())
+
+        return jsonify({
+            "all_ok": all_ok,
+            "feeds": feeds,
+            "timestamp": datetime.utcnow().isoformat(),
         })
 
     # ─────────────────────────────────────────────────────────────
@@ -592,6 +776,9 @@ def create_app() -> Flask:
                         spot_prices[sym] = ltp
 
                 # 3. Update each leg's current_price and Greeks
+                # Fix 3: Collect nearest-ATM IV per symbol for shared market data
+                symbol_ivs: Dict[str, list] = {}  # symbol -> [(distance_from_atm, iv)]
+
                 for key, pairs in leg_keys.items():
                     q = quotes.get(key, {})
                     live_ltp = q.get("last_price")
@@ -618,12 +805,26 @@ def create_app() -> Flask:
                                         sigma=impl_vol,
                                         option_type=leg.option_type,
                                     )
+                                    # Track IV for nearest-ATM selection
+                                    dist = abs(leg.strike - spot)
+                                    symbol_ivs.setdefault(pos.symbol, []).append((dist, impl_vol))
                             except Exception:
                                 pass  # Keep existing greeks if recompute fails
 
+                # Fix 3: Write nearest-ATM IV per symbol to Redis
+                for sym, iv_list in symbol_ivs.items():
+                    best_iv = min(iv_list, key=lambda x: x[0])[1]  # Closest to ATM
+                    iv_pct = round(best_iv * 100, 2)
+                    _market_data["iv"][sym] = iv_pct
+                    try:
+                        _redis_client.hset("vrp:market_data:iv", sym, iv_pct)
+                    except Exception:
+                        pass
+
                 log.debug("positions.live_refresh",
                           legs_updated=sum(len(v) for v in leg_keys.values()),
-                          spots=spot_prices)
+                          spots=spot_prices,
+                          iv_symbols=len(symbol_ivs))
 
             except Exception as e:
                 log.warning("positions.live_refresh_failed", error=str(e))
@@ -1205,6 +1406,10 @@ def create_app() -> Flask:
                     state.streamer = MarketDataStreamer(ticker)
             if state.streamer and not state.streamer.is_running:
                 state.streamer.start()
+                state.streamer.subscribe_vix(state.broker)
+
+            # Trigger daily avg volume computation in background thread
+            _start_avg_volume_computation(state.broker)
 
             return redirect(url_for("login_page"))
         except Exception as exc:

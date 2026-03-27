@@ -145,6 +145,64 @@
   </div>
 </div>
 
+<!-- Row 2b: Data Feed Status -->
+<div class="row g-3 mb-4">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-broadcast me-2"></i>Data Feed Status</span>
+        <span id="feed-overall" class="badge bg-secondary">--</span>
+      </div>
+      <div class="card-body py-2">
+        <div class="row g-2" id="feed-indicators">
+          <div class="col-md-2 col-4">
+            <div class="feed-item text-center py-2">
+              <div class="feed-dot" id="feed-dot-websocket"></div>
+              <div class="feed-label">WebSocket</div>
+              <div class="feed-detail" id="feed-detail-websocket">--</div>
+            </div>
+          </div>
+          <div class="col-md-2 col-4">
+            <div class="feed-item text-center py-2">
+              <div class="feed-dot" id="feed-dot-ltp"></div>
+              <div class="feed-label">LTP Feed</div>
+              <div class="feed-detail" id="feed-detail-ltp">--</div>
+            </div>
+          </div>
+          <div class="col-md-2 col-4">
+            <div class="feed-item text-center py-2">
+              <div class="feed-dot" id="feed-dot-india_vix"></div>
+              <div class="feed-label">India VIX</div>
+              <div class="feed-detail" id="feed-detail-india_vix">--</div>
+            </div>
+          </div>
+          <div class="col-md-2 col-4">
+            <div class="feed-item text-center py-2">
+              <div class="feed-dot" id="feed-dot-spot_5m"></div>
+              <div class="feed-label">Spot 5m</div>
+              <div class="feed-detail" id="feed-detail-spot_5m">--</div>
+            </div>
+          </div>
+          <div class="col-md-2 col-4">
+            <div class="feed-item text-center py-2">
+              <div class="feed-dot" id="feed-dot-iv"></div>
+              <div class="feed-label">IV Surface</div>
+              <div class="feed-detail" id="feed-detail-iv">--</div>
+            </div>
+          </div>
+          <div class="col-md-2 col-4">
+            <div class="feed-item text-center py-2">
+              <div class="feed-dot" id="feed-dot-avg_volume"></div>
+              <div class="feed-label">Avg Volume</div>
+              <div class="feed-detail" id="feed-detail-avg_volume">--</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Row 3: Recent Positions -->
 <div class="row g-3 mb-4">
   <div class="col-12">
@@ -322,7 +380,7 @@
 
   async function loadDashboard() {
     // Fetch all data in parallel
-    const [healthRes, greeksRes, posRes, stressRes, marketRes, accountRes, brokerPosRes, scannerRes] = await Promise.all([
+    const [healthRes, greeksRes, posRes, stressRes, marketRes, accountRes, brokerPosRes, scannerRes, feedRes] = await Promise.all([
       VRP.fetchJSON('/api/v1/health'),
       VRP.fetchJSON('/api/v1/portfolio/greeks'),
       VRP.fetchJSON('/api/v1/positions'),
@@ -331,6 +389,7 @@
       VRP.fetchJSON('/api/v1/account/overview'),
       VRP.fetchJSON('/api/v1/broker/positions'),
       VRP.fetchJSON('/api/v1/scanner/signals'),
+      VRP.fetchJSON('/api/v1/data-feed/status'),
     ]);
 
     // Live Market Data
@@ -461,6 +520,48 @@
       }
     } else {
       bpRow.style.display = 'none';
+    }
+
+    // Data Feed Status
+    if (feedRes.ok) {
+      var fd = feedRes.data;
+      var overallEl = document.getElementById('feed-overall');
+      overallEl.textContent = fd.all_ok ? 'ALL OK' : 'DEGRADED';
+      overallEl.className = 'badge ' + (fd.all_ok ? 'bg-success' : 'bg-warning text-dark');
+
+      var feedDetails = {
+        websocket: function(f) {
+          return f.ok ? f.subscribed_tokens + ' tokens' : 'Disconnected';
+        },
+        ltp: function(f) {
+          return f.ok ? f.tokens_count + ' instruments' : 'No data';
+        },
+        india_vix: function(f) {
+          return f.ok ? 'VIX: ' + f.value : 'No signal';
+        },
+        spot_5m: function(f) {
+          return f.ok ? f.tokens_with_data + '/' + f.tokens_sampled + ' tokens' : 'No buffer';
+        },
+        iv: function(f) {
+          return f.ok ? f.symbols_count + ' symbols' : 'No data';
+        },
+        avg_volume: function(f) {
+          if (!f.ok) return 'Not computed';
+          return f.symbols_count + ' sym' + (f.computed_date ? ' (' + f.computed_date + ')' : '');
+        },
+      };
+
+      Object.keys(fd.feeds).forEach(function(key) {
+        var f = fd.feeds[key];
+        var dotEl = document.getElementById('feed-dot-' + key);
+        var detEl = document.getElementById('feed-detail-' + key);
+        if (dotEl) {
+          dotEl.className = 'feed-dot ' + (f.ok ? 'feed-ok' : 'feed-down');
+        }
+        if (detEl && feedDetails[key]) {
+          detEl.textContent = feedDetails[key](f);
+        }
+      });
     }
 
     // Scanner Signals

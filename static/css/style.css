@@ -477,3 +477,50 @@ body {
   font-size: 0.8rem;
   vertical-align: middle;
 }
+
+/* ── Data Feed Status Indicators ──────────────────────────────── */
+.feed-item {
+  border-radius: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  transition: border-color 0.2s;
+}
+
+.feed-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  margin: 0 auto 6px;
+  background: var(--text-muted);
+  transition: background 0.3s, box-shadow 0.3s;
+}
+
+.feed-dot.feed-ok {
+  background: var(--accent-green);
+  box-shadow: 0 0 6px rgba(81, 207, 102, 0.5);
+}
+
+.feed-dot.feed-down {
+  background: var(--accent-red);
+  box-shadow: 0 0 6px rgba(255, 107, 107, 0.5);
+  animation: pulse-feed 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse-feed {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.feed-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.feed-detail {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
