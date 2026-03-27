@@ -94,4 +94,19 @@ systemctl restart nginx
 - **Logs:** Connect to the VM via SSH (`gcloud compute ssh trade-engine-server`), and check your logs in `/opt/tradeApp/logs/` or `/tmp/` depending on your `supervisord.conf` settings.
 
 
-nohup supervisord -c supervisord.conf > supervisord.log 2>&1 &
+    nohup supervisord -c supervisord.conf > supervisord.log 2>&1 &
+
+
+ # Stop all processes and shut down
+  .venv/bin/supervisorctl -c supervisord.conf stop all
+  .venv/bin/supervisorctl -c supervisord.conf shutdown
+
+  # Start supervisord (which starts all processes)
+  .venv/bin/supervisord -c supervisord.conf
+
+  # Check status
+  .venv/bin/supervisorctl -c supervisord.conf status
+
+  Or to just restart all processes without restarting supervisord itself:
+
+  .venv/bin/supervisorctl -c supervisord.conf restart all   
